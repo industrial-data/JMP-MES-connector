@@ -1,4 +1,3 @@
-# JMP-MES-connector
 # MES data retrieval add-in - Aspentech IP.21 and Osisoft PI (Aveva)
 
 Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
@@ -58,9 +57,7 @@ You can easily group and ungroup the tags with our Column Organizer add-in
 
 # License
 
-This add-in is open-source (BSD clause 3). The code is available in the GitHub repository.
-
-https://github.com/industrial-data/JMP-MES-connector
+This add-in is open-source (BSD clause 3).
 
 # Serverlist
 
