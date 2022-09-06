@@ -1,22 +1,12 @@
 # JMP-MES-connector
-Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
-Websites
-
-[https://community.jmp.com/t5/JMP-Add-Ins/tkb-p/add-ins](https://community.jmp.com/t5/JMP-Add-Ins/tkb-p/add-ins)
-
-[https://github.com/industrial-data/JMP-MES-connector](https://github.com/industrial-data/JMP-MES-connector)
-
-[https://community.jmp.com/t5/forums/postpage/board-id/jmp-wish-list](https://community.jmp.com/t5/forums/postpage/board-id/jmp-wish-list)
-
 # MES data retrieval add-in - Aspentech IP.21 and Osisoft PI (Aveva)
 
-# Description
+Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
+Websites
 
 This add-in automates data extraction tasks from Aspentech IP.21 and Osisoft PI (Aveva) historians.
 
 This way, you can use JMP to diagnose manufacturing problems and monitor several tags daily and weekly. See our [review](https://pubs.rsc.org/en/content/articlelanding/2022/re/d1re00541c) for more industrial data science applications.
-
-Main developers: @FN, @Carlos, @Hadley Myers, @Marinos
 
 If you would like JMP to support historians natively, give it a thumbs up in the wishlist.
 
@@ -30,7 +20,7 @@ If you would like JMP to support historians natively, give it a thumbs up in the
 
 # Functionalities
 
-![](RackMultipart20220906-1-yd7uan_html_37293f0bc0a5f562.png)
+![](media/image1.png)
 
 The **interface** allows users to:
 
@@ -47,7 +37,7 @@ You can check the log to track the progress of the data extraction. It should be
 
 After you extract data for both IP21/PI servers, you can UPDATE, REFRESH, and ADD new tags to the table with one click.
 
-![](RackMultipart20220906-1-yd7uan_html_b2fea2147f52f835.png)
+![](media/image2.png)
 
 The timestamp in UTC format (TS\_UTC column) will be used, so keep it in your table. Likewise, if you want to change the names of your tag columns, we recommend creating new columns using formulas to refer to them.
 
@@ -64,7 +54,7 @@ Use update() to keep track of all new and old data.
 
 You can easily group and ungroup the tags with our Column Organizer add-in
 
-![](RackMultipart20220906-1-yd7uan_html_7ff62c2007e813d7.png)
+![](media/image3.png)
 
 # License
 
@@ -82,7 +72,9 @@ To have as a new default your own server list, change the address in the GUI edi
 
 You can modify the source code and GUI at your will. The requisite is to keep the specific ID as "MES\_Addin". The steps to go from source code to add-in can be seen below.
 
-# ![](RackMultipart20220906-1-yd7uan_html_46932d3673c9782a.png) Roadmap
+![](media/image4.png)
+
+# Roadmap
 
 We have several improvements in mind.
 
