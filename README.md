@@ -35,7 +35,7 @@ You can check the log to track the progress of the data extraction. It should be
 
 After you extract data for both IP21/PI servers, you can UPDATE, REFRESH, and ADD new tags to the table with one click.
 
-![](media/image2.png)
+![](media/image4.png)
 
 The timestamp in UTC format (TS\_UTC column) will be used, so keep it in your table. Likewise, if you want to change the names of your tag columns, we recommend creating new columns using formulas to refer to them.
 
@@ -52,7 +52,7 @@ Use update() to keep track of all new and old data.
 
 You can easily group and ungroup the tags with our Column Organizer add-in
 
-![](media/image3.png)
+![](media/image2.png)
 
 # License
 
@@ -68,7 +68,7 @@ To have as a new default your own server list, change the address in the GUI edi
 
 You can modify the source code and GUI at your will. The requisite is to keep the specific ID as "MES\_Addin". The steps to go from source code to add-in can be seen below.
 
-![](media/image4.png)
+![](media/image3.png)
 
 # Roadmap
 
