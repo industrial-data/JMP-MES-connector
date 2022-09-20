@@ -1,7 +1,6 @@
 # MES data retrieval add-in - Aspentech IP.21 and Osisoft PI (Aveva)
 
 Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
-Websites
 
 This add-in automates data extraction tasks from Aspentech IP.21 and Osisoft PI (Aveva) historians.
 
