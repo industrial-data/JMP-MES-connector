@@ -2,7 +2,7 @@
 
 Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
 
-[Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/MES%20Data%20Retrieval%20(IP21-PI)_v_latest.jmpaddin)
+:inbox_tray: [Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/MES%20Data%20Retrieval%20(IP21-PI)_v_latest.jmpaddin)
 
 This add-in automates data extraction tasks from Aspentech IP.21 and Osisoft PI (Aveva) historians.
 
@@ -14,7 +14,7 @@ If you would like JMP to support historians natively, give it a thumbs up in the
 
 - JMP v15 or higher
 - Aspen Manufacturing Suite (Aspen InfoPlus.21®) and its ODBC driver (SQL Plus).
-- OSIsoft PI Client Tools (PI Process Book) and its (PI OLEDB driver)[https://techsupport.osisoft.com/Products/PI-System-Access/PI-OLEDB-Enterprise/Overview].
+- OSIsoft PI Client Tools (PI Process Book) and its [PI OLEDB driver](https://techsupport.osisoft.com/Products/PI-System-Access/PI-OLEDB-Enterprise/Overview).
 - Access to the server (via Window's active directory)
 - Be connected to your enterprise network (usually VPN).
 
