@@ -1,0 +1,3533 @@
+﻿JMP App(Set Name("MES Data Retrieval (IP21/PI)"), Set Description("This add-in automates data extraction tasks from Aspentech IP.21 and Osisoft PI (Aveva) historians.
+
+This way, you can use JMP to diagnose manufacturing problems and monitor several tags daily and weekly
+
+https://github.com/industrial-data/JMP-MES-connector"), Auto Launch(1), Snap To Grid(0), Show Grid(1), Show Properties(1), Show Sources(1), Group By Category(1), Dashboard Mode(0), Parameters, Tables, Script(JSL Quote(// This script is executed when the application is run.
+// Named objects have been created for the application modules
+// (for example, "Module1") and the pre-defined object
+// "thisApplication" refers to the application object itself.
+// Variables and functions declared here are scoped to the
+// Application namespace.
+
+)), Allocate(Module1 = Plan(PreAllocate, Script(JSL Quote(// This script is executed when a new module instance is
+// created.  The pre-defined object "thisModuleInstance" refers
+// to the instance object, but other objects such as boxes and
+// scripts have not yet been created.  Variables declared here are
+// scoped to the ModuleInstance namespace.
+
+// License
+// BSD-Clause 3
+// https://github.com/industrial-data/JMP-MES-connector
+// Developers
+	// Francisco Navarro @franktoffel
+	// Carlos Perez-Galvan @uceccpe
+	// Hadley Myers (first POC)
+	// Marinos Papayannopoulos (first POC)
+
+// Copyright 2022 
+
+//Redistribution and use in source and binary forms, with or without modification, 
+// are permitted provided that the following conditions are met:
+
+//1. Redistributions of source code must retain the above copyright notice, 
+// this list of conditions and the following disclaimer.
+
+//2. Redistributions in binary form must reproduce the above copyright notice, 
+// this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+//3. Neither the name of the copyright holder nor the names of its contributors 
+// may be used to endorse or promote products derived from this software without 
+// specific prior written permission.
+
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, 
+// THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
+// IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR 
+// ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, 
+// OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+//  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+//  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+// This special function will receive parameters passed to CreateInstance()
+OnModuleLoad(
+	{}, 
+);
+
+
+// This string in the global SCOPE will be used to generate PowerScript file
+// which is the OLEDB connector
+
+// Do NOT insert new lines from JMP editor (use notepad and C&P instead)
+// https://community.jmp.com/t5/Discussions/JSL-Saving-txt-files-with-Windows-end-of-line-EOL-CRLF/td-p/339509
+
+ps_hard_code_version = "2022-01-25";
+// Modify the text below to match versions
+
+// PIOLEDB DOC
+// Conneciton string
+// https://livelibrary.osisoft.com/LiveLibrary/content/en/oledb-pro-v3/GUID-D747F282-2206-48F5-8FE2-724418728A06
+
+SQL_OLEDB_PS = "\[# ver=2022-01-25
+# The comment above is used to later reset this file, do not modify it
+$OleDbConn = New-Object "System.Data.OleDb.OleDbConnection";
+$OleDbCmd = New-Object "System.Data.OleDb.OleDbCommand";
+$OleDbAdapter = New-Object "System.Data.OleDb.OleDbDataAdapter";
+$DataTable = New-Object "System.Data.DataTable";
+
+$OleDbConn.ConnectionString = "Provider=PIOLEDB.1;Data Source=$($args[0]);Integrated Security=SSPI;Persist Security Info=False;Session ID=-1;Sync Calls=True;Time Zone = Server;Command Timeout=1000;";
+$OleDbCmd.Connection = $OleDbConn;
+$OleDbCmd.CommandText = "$($args[1])";
+
+$OleDbAdapter.SelectCommand = $OleDbCmd;
+
+$OleDbConn.Open();
+$OleDbAdapter.Fill($DataTable) >$null| Out-Null;
+
+$DataTable | ConvertTo-Csv -NoTypeInformation
+
+$OleDbConn.Close();]\";
+
+
+thisModuleInstance << Create Objects;
+
+// Creates scripts in case user closes application window
+
+// FIXME (TODO, run script when application is closed)
+//Module1 << On Close(print("application closed"););
+
+
+// After this point your module instance objects have been created
+// and can be referred to by name (for example, "Button1").
+
+// //ist-priv.rhodia.com/mes-switcher/PROD/MES_servers_list.csv
+
+print("Trying to load server list (it can be edited during the session");
+
+serverlist_adress = serverlist_userbox << Get Text;
+
+f_loading_server_list = Function({},
+
+	serverlist_adress = serverlist_userbox << Get Text;
+	
+	MES_servers_list = Open(
+		serverlist_adress,
+	Import Settings(
+			End Of Line( CRLF, CR, LF ),
+			End Of Field( Other( ";" ), CSV( 0 ) ),
+			Strip Quotes( 1 ),
+			Use Apostrophe as Quotation Mark( 0 ),
+			Use Regional Settings( 0 ),
+			Scan Whole File( 1 ),
+			Treat empty columns as numeric( 0 ),
+			CompressNumericColumns( 0 ),
+			CompressCharacterColumns( 0 ),
+			CompressAllowListCheck( 0 ),
+			Labels( 1 ),
+			Column Names Start( 1 ),
+			Data Starts( 2 ),
+			Lines To Read( "All" ),
+			Year Rule( "20xx" )
+		)
+	);
+
+
+	print("Server list loaded");
+
+	// MES_servers_list = CurrentDataTable();
+	//MES_servers_list << show window(1);
+
+	MES_servers_list << NewColumn( "JMP_list", Formula( :zone || " - " || :site || " (" || :atelier || ") "|| " [" || :Type || "]"||" - " || :ShortName) );
+	MES_servers_list << NewColumn( "NetworkNode", Formula(If( :extension != "", :DirectoryHost || "." || :extension, :DirectoryHost)));
+
+
+	MES_servers_list << Sort(
+		By( :JMP_list ),
+		Replace Table,
+		Order( Ascending ),
+		Copy formula( 0 )
+	);
+
+
+	// TODO, create a table instead of a string with all this information
+
+	//valuesList = MES_servers_list << Select Columns( :Conc ) << GetValues;
+	//Show(valuesList);
+
+	// Remembers last action by users and moves server to the top
+	::server_moved = 0;
+	if(not(isempty(::selected_MES_index_recall)),
+		show(::selected_MES_index_recall);
+		print("moving user selection to top");
+		MES_servers_list << Select Rows(::selected_MES_index_recall);
+		MES_servers_list << Move Rows( At Start );
+		::server_moved = 1;
+			
+		);
+		
+	//List9 << Set Selected(1);
+
+
+	MES_list = MES_servers_list:JMP_list << GetValues;
+	//Show(valuesList);
+	ServerTypeList = MES_servers_list:Type << GetValues;
+	//Show(ServerTypeList);
+	ServerURLs = MES_servers_list:DirectoryHost << GetValues;
+
+	SiteNames = MES_servers_list:site << GetValues;
+
+	ShortNames = MES_servers_list:ShortName << GetValues; 
+
+	NetworkNodes = MES_servers_list:NetworkNode << GetValues;
+
+	Extensions = MES_servers_list:extension << GetValues;
+
+	Close( MES_servers_list, NoSave );
+
+	List9 << Append( MES_list );
+
+	// Slects first row of the list (default)
+	List9 << Set Selected(1);
+
+	user_MES= Arg(ServerURLs, 1);
+	ServerAddress_userbox << Set Text(user_MES);
+		
+		
+	user_ServerExtension = Arg(Extensions, 1); 
+	Extension_userbox << Set Text(user_ServerExtension);
+	show(user_ServerExtension);
+		
+	user_ServerType = Arg(ServerTypeList, 1);
+	show(user_ServerType);
+		
+	user_shortname = Arg(Shortnames, 1); 
+	Shortname_userbox << Set Text(user_shortname);
+	show(Shortname_userbox);
+		
+	if(user_ServerType == "IP21",
+		user_servery_type_radiobox << set(1););
+		
+	if(user_ServerType == "PI",
+		user_servery_type_radiobox << set(2););
+
+	// Rewrites server info if user modified it
+	if(not(isempty(::was_MES_edited)) & ::was_MES_edited==1,
+		Try(
+		ServerAddress_userbox << Set Text(::MES_edited);
+		Extension_userbox << Set Text(::ExtensionNode_edited);
+		Shortname_userbox << Set Text(::Shortname_edited);
+		);
+	);
+
+	t_default_min = 10;
+	t_default_s = t_default_min*60;
+
+	print("Setting default start time");
+	start_time << set( Floor(Today()/t_default_s)*t_default_s - 86400 ); // rounded date to 10 min
+
+	print("Setting default end time");
+	end_time << set( Floor(Today()/t_default_s)*t_default_s ); // rounded date to 10 min
+
+	// Sets periods to minutes in GUI
+	Period_box_units << Set(2);
+	
+	// Makes server list visible
+	List9 << Visibility( "Visible" );
+	
+	); //end loading server
+	
+	
+Try(f_loading_server_list();
+
+	// Hides information from server
+	Edit_server_address_checkbox << Set( 1, 0);
+	Server_address_panel << Visibility( "Collapse" );
+	, // Catch if serverlist was not loaded 
+	
+	show("Server list couldn't be loaded");
+	List9 << Visibility( "Collapse" );
+	Edit_server_address_checkbox << Set( 1, 1);
+	);
+
+
+print("GUI has been initialized");
+
+
+FindTagButtonPress = Function( {this}, 
+	
+	FindTagButton << enabled(0);
+	
+	
+	selected_MES_index = List9 << Get Selected Indices;
+
+	print("User index selection");
+	show(selected_MES_index);
+	
+	try(show(::selected_MES_index_recall));
+	
+	if(isempty(::selected_MES_index_recall),
+		// sets the recall to 0 on first run
+		show("Reset MES index recall");
+		::selected_MES_index_recall = 0);
+
+/*	// Checks
+	// Server is moved
+	show(::server_moved);
+	
+	// Sever selected is not the first one
+	show(selected_MES_index[1] > 1);
+	
+	// Server does need correction
+	show(selected_MES_index[1] > ::selected_MES_index_recall);*/
+	
+	// Checks if server list was moved, if first element is selected and if needs correction
+	if(::server_moved == 1 & selected_MES_index[1] > 1 & selected_MES_index[1] > ::selected_MES_index_recall[1],
+		// Server has moved to top but user changed server to query
+			print("Server index needs correction");
+			::selected_MES_index_recall = selected_MES_index - 1;,
+			print("Index does not need correction");
+			::selected_MES_index_recall = selected_MES_index;
+		);
+	
+	print("Recorded user index selection");
+	show(::selected_MES_index_recall);
+	
+    MES= Arg(ServerURLs, selected_MES_index);
+    ServerType = Arg(ServerTypeList, selected_MES_index);
+    //Server type ("IP21" or "PI")
+    
+    SiteName = Arg(SiteNames, selected_MES_index);
+    ShortName = Arg(ShortNames, selected_MES_index); 
+	NetworkNode = Arg(NetworkNodes, selected_MES_index); 
+	ServerExtension = Arg(Extensions, selected_MES_index); 
+
+	show(SiteName);
+	show(ShortName);
+	show(NetworkNode);
+    
+    write("\!n Connecting to server to find tags; \!n");
+    show(MES);
+    
+    is_MES_edited = Edit_server_address_checkbox << Get();
+    
+    if(is_MES_edited == 1,
+    
+    
+		print("Modifying server details per user request");
+		
+		/*::MES_edited = ServerAddress_userbox << Get Text;*/
+		// This does not work when compiled ?
+		
+		
+		MES_edited = ServerAddress_userbox << Get Text;
+		show(MES_edited);
+		MES = MES_edited; 
+		::MES_edited = MES_edited;
+		
+		
+		ServerType_edited = user_servery_type_radiobox << Get Selected;
+		show(ServerType_edited);
+		ServerType = ServerType_edited;
+		::ServerType_edited = ServerType_edited;
+		
+		
+		
+		ExtensionNode_edited = Extension_userbox << Get Text;
+		::ExtensionNode_edited = ExtensionNode_edited;
+		show(ExtensionNode_edited);
+		
+		if(ExtensionNode_edited == "",
+			NetworkNode_edited = MES_edited;,
+			NetworkNode_edited = MES_edited || "." || ExtensionNode_edited;);
+		
+		show(NetworkNode_edited);
+		NetworkNode = NetworkNode_edited;
+		
+		Shortname_edited = Shortname_userbox << Get Text;
+		show(Shortname_edited);
+		
+		if(Shortname_edited == "",
+			Shortname_edited="costum server shortname");
+		
+		Shortname = shortname_edited;
+		::Shortname_edited  = Shortname_edited; 
+		
+		
+		::was_MES_edited = is_MES_edited;
+    
+    );
+   
+	//filter to use
+	tagfilter = Tagf << Get Text;
+	tagfilter_desc = Tagf_description << Get Text;
+	
+	
+	if (ServerType == "IP21",
+		//IP21 TAGFILTER 	
+		//extract names using filter
+		
+		SQL_connection_str = "DRIVER={AspenTech SQLplus};HOST=" || MES || ";PORT=10014;MAXROWS=1000000";
+				
+		show(SQL_connection_str);
+		
+		dbc = Create Database Connection( SQL_connection_str );
+		
+		SQL_statment = 	"SELECT name as tagnames,
+			name->ip_description as descriptions,
+			name->ip_eng_units as units
+		FROM all_records
+		WHERE tagnames like '%" || tagfilter || "%'
+		AND descriptions like '%" || tagfilter_desc || "%';
+		";
+		
+		write("\!n", SQL_statment, "\!n");
+		
+		
+		Try(
+			dt_tagtable = Execute SQL(
+				dbc, SQL_statment, invisible);
+		
+			Close Database Connection( dbc );
+
+			dt_tagtable << SetName("Tag search results");
+	
+			, // CATCH
+			FindTagButton << enabled(1);
+			Throw("No tags found. If this error persists, check that you have access to this server or you are connected to Enterprise Network");
+		); //End TRY*/
+			
+		
+		// Order elements alphabetically
+		dt_tagtable << Sort(
+				By( :tagnames ),
+				Replace Table,
+				Order( Ascending ),
+				Copy formula( 0 )
+			);
+		// Create new column containing tagname (descr) [units]
+		dt_tagtable << NewColumn( "tag_desc_units", Formula( :tagnames || " (" || :descriptions || ") "|| " [" || :units || "]"));
+		
+		//clean up prev. list
+		List1 << Remove All;
+
+		//list of tagname elements from extraction
+		::taglist = Column(dt_tagtable, "tagnames") << Get Values;
+		
+		//list of tagnames_desc_units from extraction
+		tag_desc_units_list = Column(dt_tagtable, "tag_desc_units") << Get Values;
+		
+		Close(dt_tagtable, nosave);
+
+		//add list of tags to box
+		List1 << Append( tag_desc_units_list );
+		List1 << Set Tips( tag_desc_units_list );
+		);
+	if (ServerType == "PI",
+		//PI tagfilter
+		
+		// TODO find why PI index needs to be shifted
+		//::selected_MES_index_recall = ::selected_MES_index_recall - 1;
+		
+		// Adding Conneciton into PI
+		// (MES SWITCHER)
+		get_command = "Get-PIDataArchiveConnectionConfiguration" ;
+		write("\!n Obtaining list of PI connections; \!n");
+		
+		write(get_command);
+
+		get_result = RunProgram(
+		Executable( "powershell.exe" ),
+		Options( {"/C", get_command} ),
+		ReadFunction( "text" ) // returns all text	
+		);
+		
+		connector_position = Contains(get_result, "ServerPath : "|| NetworkNode );
+		
+		// Debugging
+		//NetworkNode = MES;
+		
+		if(connector_position==0,
+		 write("\!n Adding new PI connection (following MES Switcher convention); \!n");
+		 add_command = "powershell \!"Add-PIDataArchiveConnectionConfiguration -Name '" || ShortName ||"' -Path '" || NetworkNode || "'\!"";
+		 
+		 write("\!n", add_command, "\!n" );
+		 
+		 add_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", add_command} ),
+			ReadFunction( "text" ) // returns all text	
+		);,	
+		 write("\!n PI connection existed \!n"););
+		
+		
+		// Assuring PowerShell script is accesible
+		addin_path = "$ADDIN_HOME(MES_ADDIN)";
+
+		ps_path = ConvertFilePath( addin_path || "/OLEDB_extract.ps1", windows);
+		show(ps_path);
+		
+		write("\!n Checking if PS file exisits \!n");
+		
+		if(Not(FileExists(ps_path)),
+		write("\!n Creating PowerShell file with OLEDB extraction detalis \!n");
+		
+		// SQL_OLEDB_PS string is created when loading addin
+		saveTextFile( ps_path, SQL_OLEDB_PS ););
+		
+		PS_text = LoadTextFile( ps_path );
+		//write(PS_text);
+
+		ver_position = Contains( PS_text, "ver=" );
+		// It should return position 3
+		//show(ver_position);
+		
+		ps_version = Substr(PS_text,ver_position+4,ver_position+7 );
+		show(ps_version);
+
+		if(Or(not(ver_position==3), not(ps_version == ps_hard_code_version)),
+		 print("Creating newer PowerShell file with OLEDB extraction detalis \!n");
+		
+		// SQL_OLEDB_PS string is created when loading addin
+		saveTextFile( ps_path, SQL_OLEDB_PS ));
+		
+		
+		// Creates function to call OLEDB via Powershell
+		ExecuteOLEDB = Function({ps_path, MES, SQL_query},
+			command = "powershell -ExecutionPolicy Bypass -File " || ps_path || " " || MES || " \!"" || SQL_query || "\!"" ;
+			write("\!n", command, "\!n" );
+			query_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", command} ),
+			ReadFunction( "blob" ) // returns all text	
+			);
+			Return(query_result)
+		);
+		
+		// Queries the server to find tag names
+		SQL_tag = "SELECT tag as tagnames, descriptor as descriptions, engunits as units FROM [pipoint]..[pipoint] WHERE tag LIKE '%" || tagfilter || "%' AND descriptor LIKE '%" || tagfilter_desc || "%';"; 
+		query_tags = ExecuteOLEDB(ps_path, NetworkNode, SQL_tag);
+		
+		
+
+		Try(
+			dt_tagtable = Open( query_tags, "text" );
+			dt_tagtable << SetName("Tag search results");
+
+			::taglist = dt_tagtable:tagnames<< Get Values;
+			,
+			// Catch (tagnames column does not exist)
+			Try(Close(dt_tagtable, nosave));
+			print("Error with the expected OLEDB output:");
+			Try(Print(query_tags));
+			FindTagButton << enabled(1);
+			Throw("No tags found. If this error persists, check that you have access to this server or you are connected to Enterprise Network");
+		); //End Try/
+		
+	
+		// Order elements alphabetically
+		dt_tagtable << Sort(
+				By( :tagnames ),
+				Replace Table,
+				Order( Ascending ),
+				Copy formula( 0 )
+			);
+		// Create new column containing tagname (descr) [units]
+		dt_tagtable << NewColumn( "tag_desc_units", Formula( :tagnames || " (" || :descriptions || ") "|| " [" || :units || "]"));
+		
+		//clean up prev. list
+		List1 << Remove All;
+
+		//list of tagname elements from extraction
+		::taglist = Column(dt_tagtable, "tagnames") << Get Values;
+		
+		//list of tagnames_desc_units from extraction
+		tag_desc_units_list = Column(dt_tagtable, "tag_desc_units") << Get Values;
+		
+		Close(dt_tagtable, nosave);
+
+		//add list of tags to box
+		List1 << Append( tag_desc_units_list );
+		List1 << Set Tips( tag_desc_units_list );
+		); // end if PI search
+	
+	FindTagButton << enabled(1);
+/*	Try(
+	, // End Try Find tags
+
+	//Catch
+	FindTagButton << enabled(1);
+	Throw("No tags found. If this error persists, check that you have access to this server or you are connected to Enterprise Net");
+	); //End catch*/
+	
+);//end press "Find Tags"
+
+
+okButtonPress = Function( {this},
+	print("Extraction starts");
+	
+	ts_extraction_starts = AsDate(Today());
+	show(ts_extraction_starts);
+
+	
+	
+	//Try(
+	okButton << enabled(0); //disables button
+	okButton << Set Button Name( "Extracting..." );
+
+	selected_MES_index = List9 << Get Selected Indices;
+
+	print("User index selection");
+	show(selected_MES_index);
+	
+	try(show(::selected_MES_index_recall));
+	
+	if(isempty(::selected_MES_index_recall),
+		// sets the recall to 0 on first run
+		show("Reset MES index recall");
+		::selected_MES_index_recall = 0);
+
+/*	// Checks
+	// Server is moved
+	show(::server_moved);
+	
+	// Sever selected is not the first one
+	show(selected_MES_index[1] > 1);
+	
+	// Server does need correction
+	show(selected_MES_index[1] > ::selected_MES_index_recall);*/
+	
+	// Checks if server list was moved, if first element is selected and if needs correction
+	if(::server_moved == 1 & selected_MES_index[1] > 1 & selected_MES_index[1] > ::selected_MES_index_recall[1],
+		// Server has moved to top but user changed server to query
+			print("Server index needs correction");
+			::selected_MES_index_recall = selected_MES_index - 1;,
+			print("Index does not need correction");
+			::selected_MES_index_recall = selected_MES_index;
+		);
+	
+	print("Recorded user index selection");
+	show(::selected_MES_index_recall);	
+	
+    MES= Arg(ServerURLs, selected_MES_index);
+    ServerType = Arg(ServerTypeList, selected_MES_index);
+    //Server type ("IP21" or "PI")
+    
+    SiteName = Arg(SiteNames, selected_MES_index);
+    ShortName = Arg(ShortNames, selected_MES_index); 
+	NetworkNode = Arg(NetworkNodes, selected_MES_index); 
+	ServerExtension = Arg(Extensions, selected_MES_index); 
+
+	show(SiteName);
+	show(ShortName);
+	show(NetworkNode);
+    
+    write("\!n Connecting to server to find tags; \!n");
+    show(MES);
+    
+    is_MES_edited = Edit_server_address_checkbox << Get();
+    
+    if(is_MES_edited == 1,
+    
+		print("Modifying server details per user request");
+		
+		/*::MES_edited = ServerAddress_userbox << Get Text;*/
+		// This does not work when compiled ?
+		
+		
+		MES_edited = ServerAddress_userbox << Get Text;
+		show(MES_edited);
+		MES = MES_edited; 
+		::MES_edited = MES_edited;
+		
+		
+		ServerType_edited = user_servery_type_radiobox << Get Selected;
+		show(ServerType_edited);
+		ServerType = ServerType_edited;
+		::ServerType_edited = ServerType_edited;
+		
+		
+		
+		ExtensionNode_edited = Extension_userbox << Get Text;
+		::ExtensionNode_edited = ExtensionNode_edited;
+		show(ExtensionNode_edited);
+		
+		if(ExtensionNode_edited == "",
+			NetworkNode_edited = MES_edited;,
+			NetworkNode_edited = MES_edited || "." || ExtensionNode_edited;);
+		
+		show(NetworkNode_edited);
+		NetworkNode = NetworkNode_edited;
+		
+		Shortname_edited = Shortname_userbox << Get Text;
+		if(Shortname_edited == "",
+			Shortname_edited="costum server shortname");
+		
+		Shortname = shortname_edited;
+		::Shortname_edited  = Shortname_edited; 
+		
+		::was_MES_edited = is_MES_edited;
+    
+    );
+	
+	if (ServerType == "IP21",
+	//EXTRACTION IP21
+		print("IP21 Server");
+		selected = MethodOption << Get Selected;
+		Print(selected);
+		If( selected == "Actual",
+			Request = "4";
+			TableIP21 = "HISTORY(80)";
+			ValueIP21 = "VALUE";
+			
+		);
+		If( selected == "Interpolated",
+			Request = "6";
+			TableIP21 = "HISTORY(80)";
+			ValueIP21 = "VALUE";
+		);
+		If( selected == "Average",
+			Request = "1";
+			TableIP21 = "AGGREGATES";
+			ValueIP21 = "AVG";
+			// 1 is the default and means that the statistics are time integrated. 0 means use raw data.
+		);	
+		
+		print("Extraction options");
+		Print(Request);
+		print(TableIP21); 
+		print(ValueIP21); 
+		
+		print("Extraction period");
+		
+		Pd = Period_box << Get Text;
+		period_units = Period_box_units << Get Selected;
+		show(period_units);
+		
+		if (period_units == "seconds", 
+			PdN = Num( Pd ) * 10;
+			Pd = Char( PdN );	
+			);
+			
+		if (period_units == "minutes", 
+			PdN = Num( Pd ) * 60 * 10;
+			Pd = Char( PdN );	
+			);
+					
+		if (period_units == "hours", 
+			PdN = Num( Pd ) * 60 * 60 * 10;
+			Pd = Char( PdN );	
+			);
+				
+		if (period_units == "days", 
+			PdN = Num( Pd ) * 24 * 60 * 60 * 10;
+			Pd = Char( PdN );	
+			);
+		
+		Print( Pd );
+		Print( request );
+		Print( selected );
+		
+		querylist = List2 << get Items;//Vector of tags in this form: {"TAG_1","TAG_2",...,"TAG_N"}
+			
+		qlistchar=Char(querylist);
+		/*qlistchar=substitute(qlistchar,"\!"","'");
+		qlistchar=substitute(qlistchar,"{","");
+		qlistchar=substitute(qlistchar,"}","");*/
+
+		Print( querylist );
+		
+		print("connection to server to extract TZ current date time");
+		dbc = Create Database Connection( "DRIVER={AspenTech SQLplus};HOST=" || MES || ";PORT=10014;MAXROWS=1000000;CHARFLOAT=N;CHARTIME=N;CHARINT=N" );
+		
+		local_time_utz_TZ = Execute SQL(dbc, "WRITE Local_ISO8601(GETDBTIME);"); <<Run;
+		
+		Close Database Connection( dbc );
+		
+		// FIXME print gives empty value, it seems local_time_utz_TZ
+		print("Local server time:", local_time_utz_TZ);
+		// assuming that we get a string witht he following format '2019-11-24T12:35:41.500000+01:00'
+		//timezone = Right(local_time_utz_TZ, 6);
+				
+		start = start_time << get();
+		end = end_time << get();
+		
+		// Esimation of number of rows to be extracted per tag	
+		PdN_s = PdN/10; 
+		if(selected=="Actual", PdN_s=30); //s (common freq., some tags can go to 5 seconds)
+		
+		is_nrow_limited = 0;
+		n_estimated_rows = (end - start)/PdN_s;
+		print("The extraction is estimated to have:", n_estimated_rows, "rows");
+		
+		n_rows_limit_IP21 = 1e6;
+		
+		// Limiting the number of rows to avoid timeout and protect the server
+		if(n_estimated_rows > n_rows_limit_IP21,
+			print("Limit exceded, reducing the end date");
+			end = start + PdN_s*n_rows_limit_IP21;
+			is_nrow_limited = 1;
+			
+			New Window("Warning (data extraction)", <<Modal,
+
+			  Textbox("Given the size of the extraction (" || char(n_estimated_rows) || " rows per tag),
+			  your selected 'End Time' will be modified.
+			  
+			  The 'Update' table script can complete the extraction. This will allow you to save the extraction while reducing the overload in the MES server.
+			  
+			  Please inform your MES Point of Contact and plannify the big data extraction accordingly.")
+			  ,
+			  ButtonBox("OK")
+			);
+		);
+		
+		
+		startyear = Char( Year( start ) );
+		startmonth = Char( Month( start ) );
+		startday = Char( Day( start ) );
+		starthour = Char( Hour( start ) );
+		startminute = Char( Minute( start ) );
+		startsecond = Char( Second( start ) );
+		
+		If( Length( starthour ) == 1,
+			starthour = Concat( "0", starthour )
+		);
+		If( Length( startminute ) == 1,
+			startminute = Concat( "0", startminute )
+		);
+		If( Length( startsecond ) == 1,
+			startsecond = Concat( "0", startsecond )
+		);
+		If( Length( startday ) == 1,
+			startday = Concat( "0", startday )
+		);
+		If( Length( startmonth ) == 1,
+			startmonth = Concat( "0", startmonth )
+		);
+		
+		startformat = Char(
+			startyear || "-" || startmonth || "-" || startday || "T" || starthour || ":" || startminute || ":" || startsecond || ".000Z"
+		);
+		Print ("Starting DateTime (selected by user): ", startformat, "\!N");
+		
+		// Parsing and creating datetime format in UTC
+		endyear = Char( Year( end ) );
+		endmonth = Char( Month( end ) );
+		endday = Char( Day( end ) );
+		endhour = Char( Hour( end ) );
+		endminute = Char( Minute( end ) );
+		endsecond = Char( Second( end ) );
+		
+		If( Length( endhour ) == 1,
+			endhour = Concat( "0", endhour )
+		);
+		If( Length( endminute ) == 1,
+			endminute = Concat( "0", endminute )
+		);
+		If( Length( endsecond ) == 1,
+			endsecond = Concat( "0", endsecond )
+		);
+		If( Length( endday ) == 1,
+			endday = Concat( "0", endday )
+		);
+		If( Length( endmonth ) == 1,
+			endmonth = Concat( "0", endmonth )
+		);
+		
+		
+		endformat = Char( endyear || "-" || endmonth || "-" || endday || "T" || endhour || ":" || endminute || ":" || endsecond || ".000Z" );
+		Print ("Ending DateTime (selected by user, regional timezone but not shown): ", endformat, "\!N");
+		
+		/* Transform localtime in UTC. The ODBC script uses UTC as date input format */
+		startformat = Query(Scalar, "select datetime('" || startformat ||"', 'utc');");
+		print("Adjusted start time from server", startformat);
+		startformat = Format(Informat(startformat, "y/m/d h:m:s"), "yyyy-mm-ddThh:mm:ss") || ".000Z";
+		endformat = Query(Scalar, "select datetime('" || endformat ||"', 'utc');");
+		print("Adjusted end time from server", endformat);
+		endformat = Format(Informat(endformat, "y/m/d h:m:s"), "yyyy-mm-ddThh:mm:ss") || ".000Z";
+		
+		Print ("Ending DateTime (selected by user, UTC>no timezone): ", endformat, "\!N");
+		
+		n_tags = N Items( querylist );
+		show(n_tags);
+		
+		show(MES);
+		
+		SQL_connection_str = "DRIVER={AspenTech SQLplus};HOST=" || MES || ";PORT=10014;MAXROWS=1000000;CHARFLOAT=N;CHARTIME=N;CHARINT=N";
+		
+		show(SQL_connection_str);
+		
+
+						
+		
+		// Cannot load tags with characters (missing history(80))		
+/*		SQL_query_old = 
+"SELECT
+	NAME,
+	TS,
+	TRIM ('Z' FROM ISO8601(TS,0)) as TS_UTC,
+	" || ValueIP21 || ", STATUS,
+	name->ip_description as DESCR,
+	name->ip_eng_units as EU 
+FROM HISTORY
+WHERE ((REQUEST = " || Request || ")  
+	AND (PERIOD = " || Pd ||")
+	AND ( NAME IN  ('tagname'))  
+	AND ((TS >='" || startformat || "') 
+	AND (TS <= '" || endformat ||"')));";*/
+	
+	// It does not work (perhaps too many ";""?)
+/*		SQL_query_conditional= 
+"IF (select IP_TAG_TYPE from \!"tagname\!") = 'Text' THEN
+SELECT
+	NAME,
+	TS,
+	TRIM ('Z' FROM ISO8601(TS,0)) as TS_UTC,
+	" || ValueIP21 || ", STATUS,
+	name->ip_description as DESCR,
+	name->ip_eng_units as EU 
+FROM HISTORY(80)
+WHERE ((REQUEST = " || Request || ")  
+	AND (PERIOD = " || Pd ||")
+	AND ( NAME IN  ('tagname'))  
+	AND ((TS >='" || startformat || "') 
+	AND (TS <= '" || endformat ||"')));
+ELSE
+SELECT
+	NAME,
+	TS,
+	TRIM ('Z' FROM ISO8601(TS,0)) as TS_UTC,
+	" || ValueIP21 || ", STATUS,
+	name->ip_description as DESCR,
+	name->ip_eng_units as EU 
+FROM " || TableIP21 || " 
+WHERE ((REQUEST = " || Request || ")  
+	AND (PERIOD = " || Pd ||")
+	AND ( NAME IN  ('tagname'))  
+	AND ((TS >='" || startformat || "') 
+	AND (TS <= '" || endformat ||"')));
+END;";*/
+	
+	SQL_query = 
+"SELECT
+	NAME,
+	TS,
+	TRIM ('Z' FROM ISO8601(TS,0)) as TS_UTC,
+	CASE name->IP_TAG_TYPE WHEN 'Analog' THEN CAST(" || ValueIP21 || " as REAL) ELSE " || ValueIP21 || " END as VALUE,
+	STATUS,
+	name->ip_description as DESCR,
+	name->ip_eng_units as EU,
+	name->ip_tag_type as dtype 
+FROM " || TableIP21 || " 
+WHERE ((REQUEST = " || Request || ")  
+	AND (PERIOD = " || Pd ||")
+	AND ( NAME IN  ('tagname'))  
+	AND ((TS >='" || startformat || "') 
+	AND (TS <= '" || endformat ||"')));";	
+	
+	
+		fpostprocessing = Function( {dt_new},
+			print("Tag extracted, starting post-processing routines");
+			
+			dt_new << New Column( "tag_unit_description",
+				Formula(Char( :NAME ) || 
+				" (" || Char( :DESCR ) || ") [" || 
+				Char( :EU ) || "]" ) );	
+				
+				print("Changing format of value if analog or discrete was extracted");
+				
+				// Grouping by dtype to count them
+				dt_sum_dtype = dt_new << Summary( 
+					   Group( :dtype ), 
+					   Freq( "None" ), 
+					   Weight( "None" ) 
+				);
+				
+				// Ordering by frequency
+				dt_sum_dtype  << Sort( By( :N Rows ), Order( Descending ), Replace Table(1) ); 
+				
+				// Selecting most common dtype
+				tag_dtype = dt_sum_dtype:dtype[1];
+				
+				show(tag_dtype);
+				
+				if(tag_dtype=="Analog",
+					Column(dt_new, "VALUE") <<data type(numeric)<<modeling type(continuous)
+				);
+				
+				if(tag_dtype=="Discrete" & TableIP21=="HISTORY(80)",
+				    Column(dt_new, "VALUE")<< Set Modeling Type( "Ordinal" );
+				);
+		
+		
+			print("Summarizing stacked table");
+			
+			Try(Data Table(dt_summary);
+				SummarytableExist = 1;
+				,
+				SummarytableExist = 0);
+			
+			if(SummarytableExist == 0, 
+				dt_summary = dt_new << Summary(
+						Group( :NAME, :DESCR, :EU, :dtype ),
+						Mean( Column (dt_new, "VALUE") ), 
+						Std Dev( Column (dt_new, "VALUE") ), 
+						Max( Column (dt_new, "VALUE") ), 
+						Min( Column (dt_new, "VALUE") ), 
+						Range( Column (dt_new, "VALUE") ),
+						Freq( "None" ),
+						Weight( "None" ),
+						Link to original data table( 0 ) 
+					);
+				dt_summary << SetName("Summary table");
+				
+				dt_summary << New Column( "tag_unit_description",
+					Formula(Char( :NAME ) || 
+					" (" || Char( :DESCR ) || ") [" || 
+					Char( :EU ) || "]" ) );	
+				
+				dt_summary:tag_unit_description << Hide(1);
+				
+				);
+				
+				
+			if(SummarytableExist == 1, 	
+				dt_summary_new = dt_new << Summary(
+						Group( :NAME, :DESCR, :EU, :dtype ),
+						Mean( Column (dt_new, "VALUE") ), 
+						Std Dev( Column (dt_new, "VALUE") ), 
+						Max( Column (dt_new, "VALUE") ), 
+						Min( Column (dt_new, "VALUE") ), 
+						Range( Column (dt_new, "VALUE") ),
+						Freq( "None" ),
+						Weight( "None" ),
+						Link to original data table( 0 ) 
+					);
+					
+				dt_summary = dt_summary << Concatenate ( dt_summary_new, append to first table(1));
+				Close( dt_summary_new, nosave ); // comment this line to leave table open
+				);
+		
+		// Tansposing stacked table so the tags are shown as independent columns
+		
+			Try(DataTable(dt_transposed);
+				TransposedtableExist = 1;
+				,
+				TransposedtableExist = 0);
+			
+			if(TransposedtableExist == 0, 
+				print("Transposing table to have tags as columns");
+				dt_transposed = dt_new << Split(
+						Split By( :tag_unit_description ),
+						Split( Column (dt_new, "VALUE") ), 
+						Group( :TS, :TS_UTC ),
+						Remaining Columns( Drop All ),
+						Sort by Column Property
+				););
+				
+			if(TransposedtableExist == 1, 	
+				print("Transposing additional table to have tags as columns");
+				dt_transposed_new = dt_new << Split(
+						Split By( :tag_unit_description ),
+						Split( Column (dt_new, "VALUE") ), 
+						Group( :TS, :TS_UTC ),
+						Remaining Columns( Drop All ),
+						Sort by Column Property
+				);
+				// Update data tables
+				dt_transposed << Update(
+					With( dt_transposed_new ),
+					Match Columns( :TS_UTC = :TS_UTC ),
+					Replace Columns in Main Table( None )
+				);
+				Close( dt_transposed_new, nosave ); // comment this line to leave table open
+				
+			);
+			
+		);
+		
+		Try(DeleteSymbols(dt_summary)); // << SetName("Previous summary table"));
+		Try(DeleteSymbols(dt_transposed));// << SetName("Previous extraction"));
+		
+		If( (Num( "3.14" ) == 3.14),
+					is_EN_num_format = 1, //"English numeric format"
+					is_EN_num_format = 0 //"Non-english");
+					);
+		show(is_EN_num_format);
+				
+		If( is_EN_num_format == 0,	
+					Preferences( Use JMP Locale Settings( 0 ) ));		
+		
+		
+		
+		// Extracting all tags (IP21 first)
+		n_tags_all = NItems(querylist);
+		n_tags_extracted = 0;
+		isExtracting = 1;
+		extracted_querylist = {};
+		n_attempts = 0;
+		max_n_attempts = 10;
+		
+		while(isExtracting & n_attempts<=max_n_attempts, 
+		
+		// Removes extracted tags from querylist (in case for loop breaks due to extract errors) 
+		querylist_dict = AssociativeArray(querylist, 1::NItems(querylist));
+		querylist = (querylist_dict << Remove(AssociativeArray(extracted_querylist)) << get keys)[Rank(querylist_dict << get values)];
+		n_tags = NItems(querylist);
+
+		print("Connecting to IP21 server");
+		dbc = Create Database Connection( SQL_connection_str );
+		
+		// Extracting tags (concatenates to first table)
+		For ( i = 1, i <= n_tags, i++,	
+			// Timer (per tag)
+			ts_tag_extracton_starts = AsDate(Today());
+			
+			tag = querylist[i];
+			
+			print("Extracting tag:", tag);
+			
+			str_info_extraction = char(i) || " of " || char(n_tags) || " tags ";
+			
+			if(i==1,
+				str_info_extraction = str_info_extraction || "(estimating time)";,
+				Try(str_info_extraction = str_info_extraction || char(::t_remaining_min) || " min left");
+				);
+				
+			print( str_info_extraction );
+			
+			okButton << Set Button Name( str_info_extraction );
+			
+			SQL_query = substitute(SQL_query, "tagname", tag);
+			
+			write("\!n", SQL_query, "\!n");
+			
+			dt_temp = Execute SQL(dbc, SQL_query);
+			
+			Try(dt_temp << SetName( "Table with concatenated IP21 data");
+				print("New data table created (stacked format)");
+				dt_temp_exists = 1;,
+				print("Table with extraction was not retrieved");
+				dt_temp_exists = 0;
+				);
+			
+			
+			// If table is changed, n_columns must assert this condition to continue:
+			if(not(dt_temp_exists) | not(ncols(dt_temp)==8) , 
+				Print("Something went wrong with the IP21 extraction.");
+				Print("Trying to connect to the server again, JMP will wait the n_attempts in seconds");
+				Close( dt_temp, nosave );
+				OpenLog();
+				
+				n_attempts = n_attempts+1;
+				
+				/*if(n_tags_extracted==0,
+					print("Disconnecting from IP21 server");
+					Try(Close Database Connection( dbc ));
+					okButton << Set Button Name( "Run data extraction" );
+					okButton << enabled(1);		 				
+					Throw("Data extraction couldn't start, please check you have access to the server");
+				);*/
+			
+				if(n_attempts>max_n_attempts,
+					//Try(Close( dt_transposed, nosave ));
+					print("Disconnecting from IP21 server");
+					Try(Close Database Connection( dbc )); 	
+					print("The connection to the server failed several times during the extraction. Please add the remaining tags later.");
+					show(querylist);
+					Break();
+				);	
+
+				print("Disconnecting from IP21 server");
+				Try(Close Database Connection( dbc )); 
+				
+				show(n_attempts);
+				Wait(n_attempts);
+				try(dt_transposed << showwindow(0));
+				try(dt_summary << showwindow(0));
+				Break(); // exiting for loop
+			);
+			
+			// If there are no rows does not postprocess table
+			if(nrows(dt_temp)>0,
+				fpostprocessing(dt_temp);,
+				show(tag);
+				Print("No information to extract for this tag (probably a no numeric data type)");
+			);
+			
+			Close( dt_temp, nosave ); // Comment this to debug
+			
+			print("Tag was extracted properly");
+			InsertInto( extracted_querylist, tag );	
+			
+			print("Changing back the SQL_query string");		
+			SQL_query = substitute(SQL_query, tag, "tagname");	
+			
+			// Timer (per tag)
+			ts_tag_extracton_ends = AsDate(Today());
+			
+			ts_tag_extraction_s = Date Difference( ts_tag_extracton_starts, ts_tag_extracton_ends, "Second", "start" );
+			
+			::t_remaining_min = Ceiling((ts_tag_extraction_s*(n_tags - i))/60);
+			
+			show(ts_tag_extraction_s);
+			show(::t_remaining_min);
+			
+			n_tags_extracted = n_tags_extracted+1;
+			
+			); // ends for loop to extract tags one by one
+			
+			if(nitems(extracted_querylist) == n_tags_all,
+				print("All tags extracted succesfully");
+				isExtracting = 0;);
+			
+			); // ends while loop (in case for loop fails de to timeout)
+			
+			
+		print("Disconnecting from IP21 server");
+		Try(Close Database Connection( dbc )); 	
+			
+		// Setting back the formatting of numbers to its original
+		If( is_EN_num_format == 0,	
+			Preferences( Use JMP Locale Settings( 1 ) ));
+		
+		/// remove source code in script window
+		script_names = dt_transposed<<get table script names;
+		dt_transposed<<delete scripts(script_names);
+		
+		dt_transposed:TS_UTC<<data type(numeric)<<modeling type(continuous)<<format("yyyy-mm-ddThh:mm:ss");
+		
+		end_date = Char( endyear || "-" || endmonth || "-" || endday);
+		table_name = end_date || "_" || SiteName;
+		
+		dt_transposed << SetName(table_name);
+		// Creating update to now script
+		// If a variable is needed, simply add Expr(var).
+		
+		TS_UTC_min_date = ColMin(dt_transposed:TS_UTC);//<<format("yyyy-mm-ddThh:mm:ss");
+		TS_start_min_date = ColMin(dt_transposed:TS);//<<format("yyyy-mm-ddThh:mm:ss");
+		
+		local_to_UTC_time_diff_in_s =  TS_UTC_min_date - TS_start_min_date;
+		
+		print("Creating table with names");
+		dt_col_tagnames = dt_summary << Transpose(
+			columns( :NAME ),
+			Label( :tag_unit_description ),
+			Output Table( "Column name and tagname table" )
+		);
+		
+		
+		// Creating labels with tagname independent from column name
+		
+		colNames = Associative Array(dt_transposed << Get Column Names("String"));
+
+		colNamesExtraction = Associative Array(dt_col_tagnames << Get Column Names("String"));
+		
+		intersect_colNames = colNames;
+		intersect_colNames << intersect(colNamesExtraction);
+		
+		lst_intersect_colNames = intersect_colNames << Get Keys;
+		
+		print("Creating tagname propertiy for the following columns");
+		For(i = 1, i <= N Items(lst_intersect_colNames), i++,
+			col_tagname = Column(dt_col_tagnames, lst_intersect_colNames[i])[1];
+			Column(dt_transposed, lst_intersect_colNames[i]) << Set Property("tagname", col_tagname);
+		);
+		
+		Close( dt_col_tagnames, nosave ); // comment this line to leave concat table open
+
+		// Coding original column names to allow user changing them later
+
+		print("Creating column name propertiy for all columns");
+		colNames = dt_transposed << Get Column Names("String");
+		
+		For(i = 1, i <= N Items(colNames), i++,
+			Column(dt_transposed, colNames[i]) << Set Property("addin_colname", colNames[i]);
+		);
+		
+		
+		print("Extraction finished. Creating update and refresh scripts");
+		
+		okButton << Set Button Name( "Run data extraction" );
+		okButton << enabled(1);		
+				
+		
+		Eval(EvalExpr(dt_transposed << NewScript( "Update table",
+			
+			print("This script updates the table
+			// with new values by incrementing the # rows.
+			
+			// It requires to have the TS_UTC (timestamp with UTC format) intact.
+						
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+			
+			dt = CurrentDataTable();
+			
+			// USER PARAMETERS
+			// List of tags
+			original_querylist = Expr(querylist); 
+			print("Original list of tags: ", original_querylist);
+			
+			
+			// Get tags from table
+			print("Getting all tagnames (including new if any)");
+			colNames = dt << Get Column Names("String");
+			
+			print("Creating data dictionaries");
+			dict_colNames = Associative Array();
+			dict_tagNames = Associative Array();
+			
+			print("Iterating through current column names");
+			For(i = 1, i <= N Items(colNames), i++,
+				addin_colname = Column(dt, colNames[i]) << Get Property("addin_colname");
+				colName = colNames[i];
+				print("Getting name for column: ", colName);
+				Insert Into(dict_colNames, addin_colname, colName);
+				
+				tagname = Column(dt, colNames[i]) << Get Property("tagname");
+
+				if(tagname != Empty(),
+					print("Getting tagname for column: ", colName);
+					Insert Into(dict_tagNames, addin_colname, tagname));
+			);
+
+			show(dict_colNames);
+
+			querylist = dict_tagNames << Get Values;
+
+			//show(querylist);
+			print("Final list of tags:", querylist);
+			
+			
+			// Server
+			MES = Expr(MES);
+			SiteName = Expr(SiteName);
+			print("Server Address", MES);
+			
+			print("Recovering extraction parameters...");
+			// Type of extraction...
+			selected = Expr(selected); 
+			
+			// ...which corresponds to
+			Request = Expr(Request); 
+			ValueIP21 = Expr(ValueIP21);
+			TableIP21 = Expr(TableIP21);
+			
+			// Period
+			
+			Pd = Expr(Pd); // Period [100 ms]
+			print("Pd for SQL [in tenths of second]", Pd);
+			Period = Num(Pd)/10; // Period [s]
+			print("Period [s]", Pd);
+			
+			//startformat
+			//endformat
+			
+			print("Starting sequence to update table...");
+			
+			// Iterate trough tags
+			
+			n_tags = N Items( querylist );
+			numRows = N Rows( dt );
+			show(numRows);
+			
+			Try( print("Getting last record from table (TS_UTC)...");
+			start = ColMax(dt:TS_UTC)+Period;//<<format("yyyy-mm-ddThh:mm:ss");
+			,
+			print("'TS_UTC' column does not exist, please extract the data again using the addin");
+			ErrorWindow =  NewWindow("Error :/", <<Modal,
+				  Textbox("'TS_UTC' column does not exist. \!N Please extract the data again using the addin."));
+			Throw(); // stops execution
+			);
+			
+			TS_UTC_min_date = ColMin(dt:TS_UTC);//<<format("yyyy-mm-ddThh:mm:ss");
+			TS_start_min_date = ColMin(dt:TS);//<<format("yyyy-mm-ddThh:mm:ss");
+		
+			local_to_UTC_time_diff_in_s =  TS_UTC_min_date - TS_start_min_date;
+			show(local_to_UTC_time_diff_in_s);
+			
+			TS_UTC_start_date = Format(start, "yyyy-mm-ddThh:mm:ss");
+			TS_UTC_start_date = TS_UTC_start_date || ".000Z";
+			show(TS_UTC_start_date);
+
+			end = Floor(Today()/Period)*Period;
+			
+			is_nrow_limited = 0;
+			n_estimated_rows = (end - start) / Period;
+			Print( "The extraction is estimated to have:", n_estimated_rows, "rows" );
+			n_rows_limit_IP21 = Expr(n_rows_limit_IP21);
+			If( n_estimated_rows > n_rows_limit_IP21,
+				Print( "Limit exceded, reducing the end date" );
+				end = start + Period * n_rows_limit_IP21 - local_to_UTC_time_diff_in_s;
+				is_nrow_limited = 1;
+				Print(
+					"Given the size of the extraction (" || Char( n_estimated_rows ) ||
+					" rows per tag),
+							  your selected 'End Time' will be modified.
+							  
+							  The 'Update' table script can complete the extraction. This will allow you to save the extraction while reducing the overload in the MES server.
+							  
+							  Please inform your MES Point of Contact and plannify the big data extraction accordingly."
+				);
+			);
+			
+			
+			
+
+			TS_end_date = Format(end, "yyyy-mm-ddThh:mm:ss");
+			TS_end_date = TS_end_date || ".000Z";
+			show(TS_end_date);
+			
+			/*
+			//Transform localtime in UTC. The ODBC script uses UTC as date input format 
+			TS_start_date = Query(Scalar, "select datetime('" || TS_start_date ||"', 'utc');");
+			print("Adjusted start time from server", TS_start_date);
+			TS_start_date = Format(Informat(TS_start_date, "y/m/d h:m:s"), "yyyy-mm-ddThh:mm:ss") || ".000Z";
+			*/
+			
+			//Transform localtime in UTC. The ODBC script uses UTC as date input format 
+			TS_UTC_end_date = Query(Scalar, "select datetime('" || TS_end_date ||"', 'utc');");
+			print("Adjusted end time from server", TS_UTC_end_date);
+			TS_UTC_end_date = Format(Informat(TS_UTC_end_date, "y/m/d h:m:s"), "yyyy-mm-ddThh:mm:ss") || ".000Z";
+			
+			if(TS_UTC_start_date==TS_UTC_end_date,
+				print("Table is already updated");
+				Throw();
+			);
+			
+			
+			
+			startformat = TS_UTC_start_date;
+			endformat = TS_UTC_end_date;
+
+				print("Re-connecting to MES server to update table");
+				
+				show(MES);
+				
+				SQL_connection_str = "DRIVER={AspenTech SQLplus};HOST=" || MES || ";PORT=10014;MAXROWS=1000000;CHARFLOAT=N;CHARTIME=N;CHARINT=N";
+				
+				show(SQL_connection_str);
+				
+				//dbc = Create Database Connection( SQL_connection_str );
+	 		
+	SQL_query = 
+"SELECT
+	NAME,
+	TS,
+	TRIM ('Z' FROM ISO8601(TS,0)) as TS_UTC,
+	CASE name->IP_TAG_TYPE WHEN 'Analog' THEN CAST(" || ValueIP21 || " as REAL) ELSE " || ValueIP21 || " END as VALUE,
+	STATUS,
+	name->ip_description as DESCR,
+	name->ip_eng_units as EU,
+	name->IP_TAG_TYPE as dtype 
+FROM " || TableIP21 || " 
+WHERE ((REQUEST = " || Request || ")  
+	AND (PERIOD = " || Pd ||")
+	AND ( NAME IN  ('tagname'))  
+	AND ((TS >='" || startformat || "') 
+	AND (TS <= '" || endformat ||"')));";	
+	
+			fpostprocessing = Function( {dt_new},
+				print("Tag extracted, starting post-processing routines");
+				
+				dt_new << New Column( "tag_unit_description",
+					Formula(Char( :NAME ) || 
+					" (" || Char( :DESCR ) || ") [" || 
+					Char( :EU ) || "]" ) );	
+			
+				print("Changing format of value if analog was extracted");
+				
+				// Grouping by dtype to count them
+				dt_sum_dtype = dt_new << Summary( 
+					   Group( :dtype ), 
+					   Freq( "None" ), 
+					   Weight( "None" ) 
+				);
+				
+				// Ordering by frequency
+				dt_sum_dtype  << Sort( By( :N Rows ), Order( Descending ), Replace Table(1) ); 
+				
+				// Selecting most common dtype
+				tag_dtype = dt_sum_dtype:dtype[1];
+				
+				show(tag_dtype);
+				
+					// Configuring JMP to save CSV as commas and not 
+				
+				if(tag_dtype=="Analog",
+					Column(dt_new, "VALUE") <<data type(numeric)<<modeling type(continuous)
+				);
+				
+				if(tag_dtype=="Discrete" & TableIP21=="HISTORY(80)",
+				    Column(dt_new, "VALUE")<< Set Modeling Type( "Ordinal" );
+				);
+				print("Summarizing stacked table");
+				
+				Try(Data Table(dt_summary);
+					SummarytableExist = 1;
+					,
+					SummarytableExist = 0);
+				
+				if(SummarytableExist == 0, 
+					dt_summary = dt_new << Summary(
+							Group( :NAME, :DESCR, :EU, :dtype ), 
+							Mean( Column (dt_new, "VALUE") ), 
+							Std Dev( Column (dt_new, "VALUE") ), 
+							Max( Column (dt_new,"VALUE") ), 
+							Min( Column (dt_new, "VALUE") ), 
+							Range( Column (dt_new, "VALUE") ),
+							Freq( "None" ),
+							Weight( "None" ),
+							Link to original data table( 0 ) 
+						);
+					dt_summary << SetName("Summary table");
+					
+					dt_summary << New Column( "tag_unit_description",
+						Formula(Char( :NAME ) || 
+						" (" || Char( :DESCR ) || ") [" || 
+						Char( :EU ) || "]" ) );	
+					
+					dt_summary:tag_unit_description << Hide(1);
+					
+					);
+					
+					
+				if(SummarytableExist == 1, 	
+					dt_summary_new = dt_new << Summary(
+							Group( :NAME, :DESCR, :EU, :dtype ),
+							Mean( Column (dt_new, "VALUE") ), 
+							Std Dev( Column (dt_new, "VALUE") ), 
+							Max( Column (dt_new, "VALUE") ), 
+							Min( Column (dt_new, "VALUE") ), 
+							Range( Column (dt_new, "VALUE") ),
+							Freq( "None" ),
+							Weight( "None" ),
+							Link to original data table( 0 ) 
+						);
+						
+					dt_summary = dt_summary << Concatenate ( dt_summary_new, append to first table(1));
+					Close( dt_summary_new, nosave ); // comment this line to leave table open
+					);
+			
+			// Tansposing stacked table so the tags are shown as independent columns
+			
+				Try(DataTable(dt_transposed);
+					TransposedtableExist = 1;
+					,
+					TransposedtableExist = 0);
+				
+				if(TransposedtableExist == 0, 
+					print("Transposing table to have tags as columns");
+					dt_transposed = dt_new << Split(
+							Split By( :tag_unit_description ),
+							Split( Column (dt_new, "VALUE") ), 
+							Group( :TS, :TS_UTC ),
+							Remaining Columns( Drop All ),
+							Sort by Column Property
+					););
+					
+				if(TransposedtableExist == 1, 	
+					print("Transposing additional table to have tags as columns");
+					dt_transposed_new = dt_new << Split(
+							Split By( :tag_unit_description ),
+							Split( Column (dt_new, "VALUE") ), 
+							Group( :TS, :TS_UTC ),
+							Remaining Columns( Drop All ),
+							Sort by Column Property
+					);
+					// Update data tables
+					dt_transposed << Update(
+						With( dt_transposed_new ),
+						Match Columns( :TS_UTC = :TS_UTC ),
+						Replace Columns in Main Table( None )
+					);
+					Close( dt_transposed_new, nosave ); // comment this line to leave table open
+					
+				);
+				
+			);
+			
+			Try(DeleteSymbols(dt_summary)); // << SetName("Previous summary table"));
+			Try(DeleteSymbols(dt_transposed));// << SetName("Previous extraction"));
+			
+			If( (Num( "3.14" ) == 3.14),
+					is_EN_num_format = 1, //"English numeric format"
+					is_EN_num_format = 0 //"Non-english");
+					);
+					
+			show(is_EN_num_format);	
+			
+			If( is_EN_num_format == 0,	
+					Preferences( Use JMP Locale Settings( 0 ) ));
+			
+			
+		// Extracting all tags (IP21 update)
+		
+		n_tags_all = NItems(querylist);
+		n_tags_extracted = 0;
+		isExtracting = 1;
+		extracted_querylist = {};
+		n_attempts = 0;
+		max_n_attempts = 10;
+		
+		while(isExtracting & n_attempts<=max_n_attempts, 
+		
+		// Removes extracted tags from querylist (in case for loop breaks due to extract errors) 
+		querylist_dict = AssociativeArray(querylist, 1::NItems(querylist));
+		querylist = (querylist_dict << Remove(AssociativeArray(extracted_querylist)) << get keys)[Rank(querylist_dict << get values)];
+		n_tags = NItems(querylist);
+
+		print("Connecting to IP21 server");
+		dbc = Create Database Connection( SQL_connection_str );
+		
+		// Extracting tags (concatenates to first table)
+		For ( i = 1, i <= n_tags, i++,	
+			// Timer (per tag)
+			ts_tag_extracton_starts = AsDate(Today());
+			
+			tag = querylist[i];
+			
+			print("Extracting tag:", tag);
+			
+			str_info_extraction = char(i) || " of " || char(n_tags) || " tags ";
+			
+			if(i==1,
+				str_info_extraction = str_info_extraction || "(estimating time)";,
+				Try(str_info_extraction = str_info_extraction || char(::t_remaining_min) || " min left");
+				);
+				
+			print( str_info_extraction );
+			
+			//okButton << Set Button Name( str_info_extraction );
+			
+			SQL_query = substitute(SQL_query, "tagname", tag);
+			
+			write("\!n", SQL_query, "\!n");
+			
+			dt_temp = Execute SQL(dbc, SQL_query);
+			
+				Try(dt_temp << SetName( "Table with concatenated IP21 data");
+				print("New data table created (stacked format)");
+				dt_temp_exists = 1;,
+				print("Table with extraction was not retrieved");
+				dt_temp_exists = 0;
+				);
+			
+			
+			// If table is changed, n_columns must assert this condition to continue:
+			if(not(dt_temp_exists) | not(ncols(dt_temp)==8) , 
+				Print("Something went wrong with the IP21 extraction.");
+				Print("Trying to connect to the server again, JMP will wait the n_attempts in seconds");
+				Close( dt_temp, nosave );
+				OpenLog();
+				
+				n_attempts = n_attempts+1;
+				
+				/*if(n_tags_extracted==0,
+					print("Disconnecting from IP21 server");
+					Try(Close Database Connection( dbc ));
+					//Try(okButton << Set Button Name( "Run data extraction" ));
+					//Try(okButton << enabled(1));		 				
+					Throw("Data extraction couldn't start, please check you have access to the server");
+				);*/
+			
+				if(n_attempts>max_n_attempts,
+					//Try(Close( dt_transposed, nosave ));
+					print("Disconnecting from IP21 server");
+					Try(Close Database Connection( dbc )); 	
+					Throw("Data extraction couldn't finish, please check you have access to the server");
+					//show(querylist);
+					//Break();
+				);	
+
+				print("Disconnecting from IP21 server");
+				Try(Close Database Connection( dbc )); 
+				
+				show(n_attempts);
+				Wait(n_attempts);
+				try(dt_transposed << showwindow(0));
+				try(dt_summary << showwindow(0));
+				Break(); // exiting for loop
+			);
+			
+			print("New data table created (stacked format)");
+			
+			// If table is changed, n_columns must assert this condition to continue:
+			if(not(ncols(dt_temp)==8), 
+				Print("Something went wrong with the extraction.");
+				Print("Trying to connect to the server again, JMP will wait the n_attempts in seconds");
+				Close( dt_temp, nosave );
+				OpenLog();
+				
+				n_attempts = n_attempts+1;
+				
+				if(n_attempts>max_n_attempts,
+					Try(Close( dt_transposed, nosave ));
+					print("Disconnecting from IP21 server");
+					Try(Close Database Connection( dbc )); 	
+					Throw("The connection to the server failed several times during the extraction. Please try again later.");
+				);	
+
+				print("Disconnecting from IP21 server");
+				Try(Close Database Connection( dbc )); 
+				
+				show(n_attempts);
+				Wait(n_attempts);
+				Break(); // exiting for loop
+			);
+			
+			// If there are no rows does not postprocess table
+			if(nrows(dt_temp)>0,
+				fpostprocessing(dt_temp);,
+				show(tag);
+				Print("No information to extract for this tag (probably a no numeric data type)");
+			);
+			
+			Close( dt_temp, nosave ); // Comment this to debug
+			
+			print("Tag was extracted properly");
+			InsertInto( extracted_querylist, tag );	
+			
+			print("Changing back the SQL_query string");		
+			SQL_query = substitute(SQL_query, tag, "tagname");	
+			
+			// Timer (per tag)
+			ts_tag_extracton_ends = AsDate(Today());
+			
+			ts_tag_extraction_s = Date Difference( ts_tag_extracton_starts, ts_tag_extracton_ends, "Second", "start" );
+			
+			::t_remaining_min = Ceiling((ts_tag_extraction_s*(n_tags - i))/60);
+			
+			show(ts_tag_extraction_s);
+			show(::t_remaining_min);
+			
+			n_tags_extracted = n_tags_extracted+1;
+			
+			); // ends for loop to extract tags one by one
+			
+			if(nitems(extracted_querylist) == n_tags_all,
+				print("All tags extracted succesfully");
+				isExtracting = 0;);
+			
+			); // ends while loop (in case for loop fails de to timeout)				
+				
+			print("Disconnecting from IP21 server");
+			Try(Close Database Connection( dbc )); 	
+				
+			// Setting back the formatting of numbers to its original
+			If( is_EN_num_format == 0,	
+				Preferences( Use JMP Locale Settings( 1 ) ));
+			
+			/// remove source code in script window
+			script_names = dt_transposed<<get table script names;
+			dt_transposed<<delete scripts(script_names);
+			
+			dt_transposed:TS_UTC<<data type(numeric)<<modeling type(continuous)<<format("yyyy-mm-ddThh:mm:ss");
+	
+			
+			dt_transposed << SetName("New transposed table");
+			
+			// Creating update to now script
+			// If a variable is needed, simply add Expr(var).
+			
+			TS_UTC_min_date = ColMin(dt_transposed:TS_UTC);//<<format("yyyy-mm-ddThh:mm:ss");
+			TS_start_min_date = ColMin(dt_transposed:TS);//<<format("yyyy-mm-ddThh:mm:ss");
+			
+			local_to_UTC_time_diff_in_s =  TS_UTC_min_date - TS_start_min_date;
+			
+			print("Creating table with names");
+			dt_col_tagnames = dt_summary << Transpose(
+				columns( :NAME ),
+				Label( :tag_unit_description ),
+				Output Table( "Column name and tagname table" )
+			);
+			
+			
+			// Creating labels with tagname independent from column name
+			
+			colNames = Associative Array(dt_transposed << Get Column Names("String"));
+
+			colNamesExtraction = Associative Array(dt_col_tagnames << Get Column Names("String"));
+			
+			intersect_colNames = colNames;
+			intersect_colNames << intersect(colNamesExtraction);
+			
+			lst_intersect_colNames = intersect_colNames << Get Keys;
+			
+			print("Creating tagname propertiy for the following columns");
+			For(i = 1, i <= N Items(lst_intersect_colNames), i++,
+				col_tagname = Column(dt_col_tagnames, lst_intersect_colNames[i])[1];
+				Column(dt_transposed, lst_intersect_colNames[i]) << Set Property("tagname", col_tagname);
+			);
+			
+			Close( dt_col_tagnames, nosave ); // comment this line to leave concat table open
+
+			// Coding original column names to allow user changing them later
+
+			print("Creating column name propertiy for all columns");
+			colNames = dt_transposed << Get Column Names("String");
+			
+			For(i = 1, i <= N Items(colNames), i++,
+				Column(dt_transposed, colNames[i]) << Set Property("addin_colname", colNames[i]);
+			);
+
+			dt << Concatenate(dt_transposed, "Append to first table",);
+			
+			Close( dt_transposed, nosave );
+			Close( dt_SUMMARY, nosave );	
+		
+		 ))); // Ends Update to Now Script for IP21
+		 
+		 dt_transposed << NewScript( "Refresh table",
+			print("This script will get new data from MES while keeping the same number of rows.
+			// It is specially useful in case you want to create daily, weekly or monthly reports
+			// without having to adjust plots.
+			
+			// As with the Update Table() script, it requires to have the TS_UTC (timestamp with UTC format) intact
+			
+			// In most cases, you need to close the figures before executing this script.
+			
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+			
+			dt = CurrentDataTable();
+
+			numRows = N Rows( dt );
+			show(numRows);
+			
+		
+			index_selected_rows = dt << GetSelectedRows();
+
+			dt << RunScript( "Update table" );
+			
+			numRows_updated = N Rows( dt );
+			show(numRows_updated);
+
+			n_new_rows = numRows_updated - numRows;
+			
+			if(n_new_rows>0,
+			// New data added
+			dt << Sort(
+				By( :TS_UTC ),
+				Replace Table,
+				Order( Ascending ),
+				Copy formula( 0 ));
+
+
+
+			// TODO move selection with refresh
+			dt << Clear Select;
+			dt << SelectRows( Index( 1, n_new_rows ) );
+			dt << DeleteRows();
+			dt << SelectRows( index_selected_rows);
+			//dt << ClearColumnSelection();
+			
+			, // No new data added
+			 print("No new data was availaible");)
+			
+			// FIXME (highlight row)
+			//dt << SelectRows(index_selected_rows)
+			
+			); //End refresh table
+			
+	Eval(EvalExpr(dt_transposed << NewScript( "Add new tags",
+			
+			print("This script downloads the data from new tags after the extraction.
+			
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+			
+			win = New Window( "Extracting new tags",
+					<<Modal,
+					<<Return Result,
+						Line Up Box( N Col( 2 ), Spacing( 5 ),
+						Panel Box( "Tagnames only",
+								userlist = List Box( {}, nlines=10 )),
+							Button Box( "Paste", 
+								copiedtags=get clipboard();
+								new_taglist=Words(copiedtags,"\!t\!r\!n");
+								show(new_taglist);
+								userlist<<Append(new_taglist); );,
+							
+								Button Box( "Remove all", 
+								userlist<<Remove All; )
+
+							
+						),
+					
+
+				);
+				 
+
+			if(win["Button"] == -1, // canceled
+					print("Canceled by user");
+					Throw();
+					);
+					
+					
+			print("New tags requested to be extracted");
+			show(new_taglist);
+			
+			dt_main = CurrentDataTable();
+			
+			// Get tags from original table
+			print("Getting already extracted tagnames (including new if any)");
+			colNames = dt_main << GetColumnNames("String");
+			
+			print("Creating data dictionaries");
+			
+			dict_UsertagNames = Associative Array(new_taglist);
+			show(dict_UsertagNames);
+			
+			dict_tagNames = Associative Array();
+			
+			print("Iterating through data table column names");
+			For(i = 1, i <= N Items(colNames), i++,
+				colName = colNames[i];
+				
+				tagname = Column(dt_main, colName) << Get Property("tagname");
+
+				if(tagname != Empty(),
+					print("Getting tagname for column: ", colName);
+					dict_tagNames << Insert (tagname, colName));
+			);
+
+			Show( dict_tagNames );
+			intersection = dict_tagNames;
+			intersection << Intersect( dict_UsertagNames );
+			Print( "common (intersection) tags:", intersection << getkeys );
+
+			dict_UsertagNames << Remove( intersection );
+			show(dict_UsertagNames);
+
+			Try( querylist = dict_UsertagNames << Get Keys,
+				Throw( "No new tags to extract (there were already in the data table)." )
+			);
+			
+			print("New tags to extract after removing duplicates", querylist);
+			
+			//querylist = {"IN_TI_X1_2.PV", "TI_G59_8.PV", "P-G99_11.XJ01"};
+			
+			/// remove source code in script window
+			main_script_names = AssociativeArray(dt_main<<get table script names);
+		
+			numRows = N Rows( dt_main );
+			show(numRows);
+			
+			// Getting user names in case it changed originals
+			Print( "Creating data dictionaries" );
+			colNames = dt_main << Get Column Names( "String" );
+			dict_colNames = Associative Array();
+			Print( "Iterating through current column names" );
+			For( i = 1, i <= N Items( colNames ), i++,
+				colName = colNames[i];
+				addin_colname = Column( dt_main, colName ) <<
+				Get Property( "addin_colname" );
+				
+				Print( "Getting original addin name for column: ", colName );
+				Insert Into( dict_colNames, addin_colname, colName );
+			);
+			
+			show(dict_colNames);
+			user_TS = dict_colNames << Get Value("TS");
+			print("User TS (TimeStamp) column name", user_TS);
+		
+			// Period
+			Pd = Expr(Pd); // Period [100 ms]
+			print("Pd for SQL [in tenths of second]", Pd);
+			Period = Num(Pd)/10; // Period [s]
+			print("Period [s]", Pd);
+		
+				
+			Try( print("Getting first and last record from table (TS_UTC)...");
+			TS_UTC_mainstart_date = ColMin(dt_main:TS_UTC);
+			TS_UTC_mainend_date = ColMax(dt_main:TS_UTC);
+			,
+			print("'TS_UTC' column does not exist, please extract the data again using the addin");
+			ErrorWindow =  NewWindow("Error :/", <<Modal,
+				  Textbox("'TS_UTC' column does not exist. \!N Please extract the data again using the addin."));
+			Throw(); // stops execution
+			);
+			
+			
+			dt_new_ext = dt_main << Subset(
+				Selected Rows( 0 ),
+				Rows( Matrix({1}) ),//Matrix({1, numRows}) 
+				columns( Column(dt_main,user_TS), dt_main:TS_UTC));
+			
+			Column(dt_new_ext, user_TS)[1] = Column(dt_new_ext, user_TS)[1] - Period;
+			dt_new_ext:TS_UTC[1] = dt_new_ext:TS_UTC[1] - Period;
+			
+			n_tags = N Items( querylist );
+			show(n_tags);
+			
+			odb_querylist = Substitute( Char( querylist ), "{", "(", "}", ")","\!"","'" );
+
+			write(odb_querylist);
+		
+			// Get info from main table
+			numRows = N Rows( dt_main );
+			show(numRows);
+			
+			
+			print("Recovering few extraction parameters...");
+			
+			// Server
+			MES = Expr(MES);
+			SiteName = Expr(SiteName);
+			print("Server Address", MES);
+			
+			TableIP21 = Expr(TableIP21);
+			
+			
+			dbc = Create Database Connection( "DRIVER={AspenTech SQLplus};HOST=" || MES || ";PORT=10014; MAXROWS=1000000" );
+			
+			SQL_tag = "SELECT name as tagnames,
+				name->ip_description as descriptions,
+				name->ip_eng_units as units,
+				definition as tagtype
+			FROM all_records
+			WHERE tagnames in " || odb_querylist || ";";
+			
+			write("\!n", SQL_tag, "\!n");
+			
+			dt_tagtable = Execute SQL( dbc, SQL_tag );
+			
+			Close Database Connection( dbc );
+			
+			show(Type(dt_tagtable));
+			If( Type( dt_tagtable ) != "Table",
+				Throw( "Check that you have access to the server and your connection to the Enterprise Network (or VPN)" )
+			);
+						
+			if(NRows(dt_tagtable)==0,
+				Close( dt_tagtable, nosave );
+				Close( dt_new_ext, nosave );
+				Throw("Please, check that your tagnames are correct");	
+				);//
+			
+			
+			dt_tagtable << SetName("Tag search results");
+			
+			// Create new column containing tagname (descr) [units]
+			dt_tagtable << NewColumn( "tag_desc_units", Formula( :tagnames || " (" || :descriptions || ") "|| "[" || :units || "]"));
+			
+			
+			//list of tagnames_desc_units from extraction
+			tag_desc_units_list = Column(dt_tagtable, "tag_desc_units") << Get Values;
+			
+			//Close(dt_tagtable, nosave);
+			n_new_tags = NRows(dt_tagtable);
+			lst_new_tagnames = Column(dt_tagtable, "tagnames") << Get Values;
+			lst_new_colnames = Column(dt_tagtable, "tag_desc_units") << Get Values;
+			lst_new_coltypes = Column(dt_tagtable, "tagtype") << Get Values;
+			
+			
+			
+			print("Creating columns and metadata as properties");
+			For(i = 1, i <= n_new_tags, i++,
+				new_tagname = lst_new_tagnames[i];
+				new_colname = lst_new_colnames[i];
+				new_coltype = lst_new_coltypes[i];
+				
+				if(new_coltype == "IP_AnalogDef" | TableIP21=="AGGREGATES", 
+				dt_new_ext << New Column(new_colname, Numeric);,
+				dt_new_ext << New Column(new_colname, Character););
+				
+				if(new_coltype == "IP_DiscreteDef" & TableIP21=="HISTORY(80)", 
+				dt_new_ext << Set Modeling Type( "Ordinal" );
+				);
+				
+				Column(dt_new_ext, new_colname) << Set Property("tagname", new_tagname);
+				Column(dt_new_ext, new_colname) << Set Property("addin_colname", new_colname);
+				);
+		
+		Close( dt_tagtable, nosave ); // comment this line to leave concat table open
+		dt_new_ext << RunScript( "Update table" );
+		
+
+		// Update data tables
+			dt_main << Update(With( dt_new_ext ),
+			Match Columns( :TS_UTC = :TS_UTC ));
+		Close( dt_new_ext, nosave ); // comment this line to leave concat table open
+		
+		print("Cleaning new scripts added after the update");
+		main_script_names_after_update = AssociativeArray(dt_main<<get table script names);
+		
+		uncommon_scripts = main_script_names_after_update;
+		uncommon_scripts << Remove( main_script_names );
+		list_uncommon_scripts = uncommon_scripts << Get Keys;
+		show(list_uncommon_scripts);
+		dt_main << Delete Scripts( list_uncommon_scripts );
+		
+		 ))); // Ends Add new column Script for IP21
+		 
+	); //End extraction for IP21
+	
+	if (ServerType == "PI",
+	
+	
+	//EXTRACTION FROM PI
+	print("PI Server");
+		Try(
+		okButton << enabled(0); //disables button
+		okButton << Set Button Name( "Extracting..." );
+		
+		// Adding conneciton into PI
+		// (like MES SWITCHER)
+		get_command = "Get-PIDataArchiveConnectionConfiguration" ;
+		write("\!n Obtaining list of PI connections; \!n");
+		
+		write(get_command);
+
+		get_result = RunProgram(
+			Executable( "powershell.exe" ),
+			Options( {"/C", get_command} ),
+			ReadFunction( "text" ) // returns string	
+			);
+		
+		print("Checking if connection to the server exists in PI");
+		connector_position = Contains(get_result, "ServerPath : "|| NetworkNode );
+		
+		show(connector_position);
+		if(connector_position==0,
+		 write("\!n Adding new PI connection (following MES Switcher convention); \!n");
+		 add_command = "powershell \!"Add-PIDataArchiveConnectionConfiguration -Name '" || ShortName ||"' -Path '" || NetworkNode || "'\!"";
+
+		 write("\!n", add_command, "\!n" );
+		 
+		 add_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", add_command} ),
+			ReadFunction( "text" ));,	
+		 write("\!n PI connection existed \!n"););
+		
+		
+		// Assuring PowerShell script is accesible
+		addin_path = "$ADDIN_HOME(MES_ADDIN)";
+
+		ps_path = ConvertFilePath( addin_path || "/OLEDB_extract.ps1", windows);
+		show(ps_path);
+		
+		write("\!n Checking if PS file exisits \!n");
+		
+		if(Not(FileExists(ps_path)),
+		write("\!n Creating PowerShell file with OLEDB extraction detalis \!n");
+		
+		// SQL_OLEDB_PS string is created when loading addin
+		saveTextFile( ps_path, SQL_OLEDB_PS ););
+		
+		PS_text = LoadTextFile( ps_path );
+		//write(PS_text);
+
+		ver_position = Contains( PS_text, "ver=" );
+		// It should return position 3
+		//show(ver_position);
+		
+		ps_version = Substr(PS_text,ver_position+4,ver_position+7 );
+		show(ps_version);
+
+		if(Or(not(ver_position==3), not(ps_version == ps_hard_code_version)),
+		 print("Creating newer PowerShell file with OLEDB extraction detalis \!n");
+		
+		// SQL_OLEDB_PS string is created when loading addin
+		saveTextFile( ps_path, SQL_OLEDB_PS ));
+
+		
+		selected = MethodOption << Get Selected;
+		show(selected);
+		
+		start = Num(start_time << get());
+		print("Start time is considered as local time");
+		
+		end = Num(end_time << get());
+		print("End time is considered as local time");
+		
+		Period = Period_box << Get Text;
+		show(Period);
+		
+		period_units = Period_box_units << Get Selected;
+		show(period_units);
+		
+		if (period_units == "seconds", 
+			Pd = Num(Period);
+			Period = Char(Pd);	
+			);
+			
+		if (period_units == "minutes", 
+			Pd = Num(Period) * 60;
+			Period = Char(Pd);
+			);
+					
+		if (period_units == "hours", 
+			Pd = Num(Period) * 60 * 60;
+			Period = Char(Pd);	
+			);
+				
+		if (period_units == "days", 
+			Pd = Num(Period)* 24* 60 * 60;
+			Period = Char(Pd);	
+			);
+			
+		// Esimation of number of rows to be extracted per tag	
+		
+		if(selected=="Actual", Pd=30); //s (common freq., some tags can go to 5 seconds)
+		
+		is_nrow_limited = 0;
+		n_estimated_rows = (end - start)/Pd;
+		print("The extraction is estimated to have:", n_estimated_rows, "rows");
+		
+		n_rows_limit_PI = 1e6;
+		
+		// Limiting the number of rows to avoid timeout and protect the server
+		if(n_estimated_rows > n_rows_limit_PI,
+			print("Limit exceded, reducing the end date");
+			end = start + Pd*n_rows_limit_PI;
+			is_nrow_limited = 1;
+			
+			New Window("Warning (data extraction)", <<Modal,
+
+			  Textbox("Given the size of the extraction (" || char(n_estimated_rows) || " rows per tag),
+			  your selected 'End Time' will be modified.
+			  
+			  The 'Update table' script can complete the extraction. This will allow you to save the extraction while reducing the overload in the MES server.
+			  
+			  Please inform your MES Point of Contact and plannify the big data extraction accordingly.")
+			  ,
+			  ButtonBox("OK")
+			);
+		);
+
+		
+		
+		querylist = List2 << get Items;//Vector of tags in this form: {"TAG_1","TAG_2",...,"TAG_N"}
+		show(querylist);
+		
+		If( selected == "Interpolated",
+			TablePI = "piinterp2";
+			SQL_InterpolatedPI = "AND timestep = '" || Period || "s'";
+		);
+		If( selected == "Actual",
+			TablePI = "picomp";
+			SQL_InterpolatedPI = "";
+		);
+		If( selected == "Average",
+			TablePI = "piavg";
+			SQL_InterpolatedPI = "AND timestep = '" || Period || "s'";
+		);
+		
+		show(TablePI);
+		
+		startformat = Format(start, "yyyy-mm-ddThh:mm:ss");//
+		Print("Starting DateTime (selected by user): ", startformat, "\!N");
+		
+		endformat = Format(end, "yyyy-mm-ddThh:mm:ss");//
+		Print("Ending DateTime (selected by user): ", endformat, "\!N");
+		
+		addin_path = "$ADDIN_HOME(MES_ADDIN)";
+		ps_path = ConvertFilePath( addin_path || "/OLEDB_extract.ps1", windows);
+			
+		n_tags = N Items( querylist );
+		
+		// Creates function to call OLEDB via Powershell
+		ExecuteOLEDB = Function({ps_path, MES, SQL_query},
+			command = "powershell -ExecutionPolicy Bypass -File " || ps_path || " " || MES || " \!"" || SQL_query || "\!"" ;
+			write("\!n", command, "\!n" );
+			query_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", command} ),
+			ReadFunction( "blob" ) // returns all text	
+			);
+			Return(query_result)
+		);
+		
+		// Queries the server to remove invalid tag names
+		
+		sql_tag_list = Substitute(char(querylist), "\!"", "'", "{", "(", "}", ")");		
+		SQL_tag = "SELECT tag FROM [pipoint]..[pipoint] WHERE tag IN "|| sql_tag_list;
+		query_tags = ExecuteOLEDB(ps_path, NetworkNode, SQL_tag);
+		
+		dt_valid_tags = Open( query_tags, "text" );
+		
+		//connection_error = 0;
+		Try(querylist = dt_valid_tags:tag << Get Values;,
+			// Error executing command, no tag column exists
+			//connection_error = 1;
+			Close( dt_valid_tags, nosave );
+			write("\!n\!n >>> UNABLE TO QUERY SERVER, check that you have access to the server");
+			OpenLog(1);
+			Throw();
+			);
+		
+						
+		Close( dt_valid_tags, nosave ); 
+
+		n_tags = N Items( querylist );
+		
+		if(n_tags==0,
+			write("/!n Unable to query tags to server, use tag name only");
+			OpenLog();
+			Throw();
+			);
+				
+		// Local server time
+		SQL_local_time ="SELECT format(date('*'), 'yyyy-MM-dd HH:mm:ss') as ServerDateTime";//'yyyy-MM-dd HH:mm:ss'
+		query_result = ExecuteOLEDB(ps_path, NetworkNode, SQL_local_time);
+		dt_server_local_time = Open( query_result, "text" );
+
+		ServerDateTime_value = dt_server_local_time:ServerDateTime[1];
+		
+		Close(dt_server_local_time,nosave);
+		
+		ServerDateTime_value = Floor(ServerDateTime_value/Pd)*Pd; // rounding date
+		
+		// In case user is in a more advanced time zone
+		if (end>ServerDateTime_value,
+			endformat = Format(ServerDateTime_value, "yyyy-mm-ddThh:mm:ss");
+			print("Reseting end time to the current and local server time");
+			show(endformat);	
+			);
+			
+		
+		// All inputs for data extraction defined
+		
+		// Starting query extraction
+		
+		// Template
+		SQL_query = "SELECT c.tag as NAME, format(c.time, 'yyyy-MM-dd HH:mm:ss') as TS, format(c.__utctime, 'yyyy-MM-dd HH:mm:ss') as TS_UTC, CASE p.pointtype WHEN 'D' THEN DIGSTRING(CAST(c.value as int32)) ELSE CAST(c.value AS STRING) END as VALUE, p.descriptor as DESCR, p.engunits as EU, p.pointtype as tagtype FROM [pipoint]..[pipoint] p, [piarchive]..["|| TablePI ||"] c WHERE p.tag = 'tagname' AND c.tag = p.tag AND c.time BETWEEN '"|| startformat ||"' AND '"|| endformat ||"'"|| SQL_InterpolatedPI;
+
+
+		// FIXME, if tabs and new lines are added in editor, Substitute() does not work!?
+		/*
+		SQL_query = "SELECT
+			c.tag as NAME,
+			c.time as TS,
+			c.__utctime as TS_UTC,
+			c.value as VALUE,
+			p.descriptor as DESCR,
+			p.engunits as EU
+		FROM [pipoint]..[pipoint] p,
+			[piarchive]..["|| TablePI ||"] c
+		WHERE p.tag = '"|| tag ||"'
+			AND c.tag = p.tag
+			AND c.time BETWEEN '"|| startformat ||"' AND '"|| endformat ||"'"
+			|| SQL_InterpolatedPI;
+		*/	
+		
+		// Function to format string (SQL command needs to be in one line)
+		SQL_query_to_line = Function({SQL_Query},
+				SQL_query = Substitute( SQL_query,"\!t", " ");
+				SQL_query = Substitute(SQL_query,"\!r", " ");
+				Return(SQL_Query);	
+		);
+		
+		SQL_Query = SQL_query_to_line(SQL_Query);
+		show(SQL_Query);
+
+		show(ps_path);
+		show(MES);		
+	
+		fpostprocessing = Function( {dt_new},
+			print("Tag extracted, starting post-processing routines");
+			
+			dt_new << New Column( "tag_unit_description",
+				Formula(Char( :NAME ) || 
+				" (" || Char( :DESCR ) || ") [" || 
+				Char( :EU ) || "]" ) );	
+		
+		
+			print("Summarizing stacked table");
+			
+			Try(Data Table(dt_summary);
+				SummarytableExist = 1;
+				,
+				SummarytableExist = 0);
+			
+			if(SummarytableExist == 0, 
+				dt_summary = dt_new << Summary(
+						Group( :NAME, :DESCR, :EU ),
+						Mean( Column (dt_new, "VALUE") ), 
+						Std Dev( Column (dt_new, "VALUE") ), 
+						Max( Column (dt_new, "VALUE") ), 
+						Min( Column (dt_new, "VALUE") ), 
+						Range( Column (dt_new, "VALUE") ),
+						Freq( "None" ),
+						Weight( "None" ),
+						Link to original data table( 0 ) 
+					);
+				dt_summary << SetName("Summary table");
+				
+				dt_summary << New Column( "tag_unit_description",
+					Formula(Char( :NAME ) || 
+					" (" || Char( :DESCR ) || ") [" || 
+					Char( :EU ) || "]" ) );	
+				
+				dt_summary:tag_unit_description << Hide(1);
+				
+				);
+				
+				
+			if(SummarytableExist == 1, 	
+				dt_summary_new = dt_new << Summary(
+						Group( :NAME, :DESCR, :EU ),
+						Mean( Column (dt_new, "VALUE") ), 
+						Std Dev( Column (dt_new, "VALUE") ), 
+						Max( Column (dt_new, "VALUE") ), 
+						Min( Column (dt_new, "VALUE") ), 
+						Range( Column (dt_new, "VALUE") ),
+						Freq( "None" ),
+						Weight( "None" ),
+						Link to original data table( 0 ) 
+					);
+					
+				dt_summary = dt_summary << Concatenate ( dt_summary_new, append to first table(1));
+				Close( dt_summary_new, nosave ); // comment this line to leave table open
+				);
+		
+		// Tansposing stacked table so the tags are shown as independent columns
+		
+			Try(DataTable(dt_transposed);
+				TransposedtableExist = 1;
+				,
+				TransposedtableExist = 0);
+			
+			if(TransposedtableExist == 0, 
+				print("Transposing table to have tags as columns");
+				dt_transposed = dt_new << Split(
+						Split By( :tag_unit_description ),
+						Split( Column (dt_new, "VALUE") ), 
+						Group( :TS, :TS_UTC ),
+						Remaining Columns( Drop All ),
+						Sort by Column Property
+				););
+				
+			if(TransposedtableExist == 1, 	
+				print("Transposing additional table to have tags as columns");
+				dt_transposed_new = dt_new << Split(
+						Split By( :tag_unit_description ),
+						Split( Column (dt_new, "VALUE") ), 
+						Group( :TS, :TS_UTC ),
+						Remaining Columns( Drop All ),
+						Sort by Column Property
+				);
+				// Update data tables
+				dt_transposed << Update(
+					With( dt_transposed_new ),
+					Match Columns( :TS_UTC = :TS_UTC ),
+					Replace Columns in Main Table( None )
+				);
+				Close( dt_transposed_new, nosave ); // comment this line to leave table open
+				
+			);
+			
+		);
+		
+		Try(DeleteSymbols(dt_summary)); // << SetName("Previous summary table"));
+		Try(DeleteSymbols(dt_transposed));// << SetName("Previous extraction"));
+		
+	
+		
+		
+		// Extracting all tags (PI first)
+		n_tags_all = NItems(querylist);
+		n_tags_extracted = 0;
+		isExtracting = 1;
+		extracted_querylist = {};
+		n_attempts = 0;
+		max_n_attempts = 10;
+		
+		while(isExtracting & n_attempts<=max_n_attempts, 
+		
+		// Removes extracted tags from querylist (in case for loop breaks due to extract errors) 
+		querylist_dict = AssociativeArray(querylist, 1::NItems(querylist));
+		querylist = (querylist_dict << Remove(AssociativeArray(extracted_querylist)) << get keys)[Rank(querylist_dict << get values)];
+		n_tags = NItems(querylist);
+		For ( i = 1, i <= NItems(querylist), i++,
+			// Timer (per tag)
+			ts_tag_extracton_starts = AsDate(Today());
+			
+			tag = querylist[i];
+			
+			print("Extracting tag:", tag);
+			
+			str_info_extraction = char(i) || " of " || char(n_tags) || " tags ";
+			
+			if(i==1,
+				str_info_extraction = str_info_extraction || "(estimating time)";,
+				str_info_extraction = str_info_extraction || char(::t_remaining_min) || " min left";
+				);
+				
+			print( str_info_extraction );
+					
+			
+			SQL_query = substitute(SQL_query, "tagname", tag);
+			
+			query_result = ExecuteOLEDB(ps_path, NetworkNode, SQL_query);
+			
+			dt_temp = Open( query_result, "text" );
+			
+			dt_temp << SetName( "Table with concatenated PI data");
+			print("New data table created (stacked format)");
+			
+			// If table is changed, n_columns must assert this condition to continue:
+			if(not(ncols(dt_temp)==7),
+				Print("Something went wrong with the PI extraction.", query_result);
+				Print("Trying to connect to the server again, JMP will wait the n_attempts in seconds");
+				Close( dt_temp, nosave );
+				OpenLog();
+				
+				n_attempts = n_attempts+1;
+				
+				/*if(n_tags_extracted==0,
+					okButton << Set Button Name( "Run data extraction" );
+					okButton << enabled(1);		 				
+					Throw("Data extraction couldn't start, please check you have access to the server");
+				);*/
+				
+				if(n_attempts>max_n_attempts,
+					Try(Close( dt_transposed, nosave ));
+					print("The connection to the server failed several times during the extraction. Please try again later.");
+				);	
+				
+				show(n_attempts);
+				Wait(n_attempts);
+				try(dt_transposed << showwindow(0));
+				try(dt_summary << showwindow(0));
+				Break(); // exiting for loop
+			);
+			
+			
+			// If there are no rows does not postprocess table
+			if(nrows(dt_temp)>0,
+				fpostprocessing(dt_temp);,
+				show(tag);
+				Print("No information to extract for this tag (probably a no numeric data type)");
+			);
+			
+			Close( dt_temp, nosave ); // Comment this to debug
+			
+			print("Tag was extracted properly");
+			InsertInto( extracted_querylist, tag );	
+			
+			print("Changing back the SQL_query string");		
+			SQL_query = substitute(SQL_query, tag, "tagname");	
+			
+			// Timer (per tag)
+			ts_tag_extracton_ends = AsDate(Today());
+			
+			ts_tag_extraction_s = Date Difference( ts_tag_extracton_starts, ts_tag_extracton_ends, "Second", "start" );
+			
+			::t_remaining_min = Ceiling((ts_tag_extraction_s*(n_tags - i))/60);
+			
+			show(ts_tag_extraction_s);
+			show(::t_remaining_min);
+			
+			n_tags_extracted = n_tags_extracted+1;			
+			
+			); // ends for loop to extract tags one by one
+			
+			if(nitems(extracted_querylist) == n_tags_all,
+				print("All tags extracted succesfully");
+				isExtracting = 0;);
+			
+			); // ends while loop (in case for loop fails de to timeout)
+		
+		
+		//Close( dt_new, nosave ); // comment this line to leave table open
+		
+		/// remove source code in script window
+		script_names = dt_transposed<<get table script names;
+		dt_transposed<<delete scripts(script_names);
+		
+		//wait_time =  0.1; // [s]
+		
+		//Preferences( Use JMP Locale Settings( 1 ) );Wait(wait_time);
+		//transposed:TS_UTC<< Set Data Type( Numeric ) << Modeling Type( continuous ) << Format( "Locale Date Time h:m:s" );
+		//Preferences( Use JMP Locale Settings( 0 ) );Wait(wait_time);
+		//transposed:TS_UTC<< Format( "Locale Date Time h:m:s" );
+		
+		dt_transposed:TS_UTC<<data type(numeric)<<modeling type(continuous)<<format("yyyy-mm-ddThh:mm:ss")<<input format("y/m/d h:m:s");
+		
+		end_date = Format(end, "yyyy-mm-dd");
+		table_name = end_date || "_" || SiteName;
+		dt_transposed << SetName(table_name);
+		
+		TS_UTC_min_date = ColMin(dt_transposed:TS_UTC);//<<format("yyyy-mm-ddThh:mm:ss");
+		TS_start_min_date = ColMin(dt_transposed:TS);//<<format("yyyy-mm-ddThh:mm:ss");
+		
+		local_to_UTC_time_diff_in_s =  TS_UTC_min_date - TS_start_min_date;
+		
+		print("Creating table with names");
+		dt_col_tagnames = dt_summary << Transpose(
+			columns( :NAME ),
+			Label( :tag_unit_description ),
+			Output Table( "Column name and tagname table" )
+		);
+
+		//Close(dt_new, nosave);
+		
+		// Creating labels with tagname independent from column name
+		print("Creating data dictionaries");
+		colNames = Associative Array(dt_transposed << Get Column Names("String"));
+		//show(colNames);
+		colNamesExtraction = Associative Array(dt_col_tagnames << Get Column Names("String"));
+		//show(colNamesExtraction);
+		
+		intersect_colNames = colNames;
+		intersect_colNames << intersect(colNamesExtraction);
+		
+		lst_intersect_colNames = intersect_colNames << Get Keys;
+		//show(lst_intersect_colNames);
+		
+		print("Creating tagname propertiy for the following columns");
+		For(i = 1, i <= N Items(lst_intersect_colNames), i++,
+			col_tagname = Column(dt_col_tagnames, lst_intersect_colNames[i])[1];
+			Column(dt_transposed, lst_intersect_colNames[i]) << Set Property("tagname", col_tagname);
+		);
+		
+		Close( dt_col_tagnames, nosave ); // comment this line to leave concat table open
+		
+		
+		// Coding original column names to allow user changing them later
+
+		print("Creating column name propertiy for all columns");
+		colNames = dt_transposed << Get Column Names("String");
+		
+		For(i = 1, i <= N Items(colNames), i++,
+			Column(dt_transposed, colNames[i]) << Set Property("addin_colname", colNames[i]);
+		);
+		
+		okButton << Set Button Name( "Run data extraction" );
+		okButton << enabled(1);
+		, // End try of extraction
+		
+		// Catch
+		okButton << Set Button Name( "Run data extraction" );
+		okButton << enabled(1);
+		print(exception_msg);
+		Throw("Something went wrong, please check the log");
+		); // End of TryCatch PI extraction
+		
+
+
+		// Creating update to now script
+		// If a variable is needed, simply add Expr(var).
+		
+		Eval(EvalExpr(dt_transposed << NewScript( "Update table",
+			
+			print("This script updates with new values the original table by incrementing the # rows
+			
+			// In this early version, it also assumes user is in the same time zone as the server
+						
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+						
+			dt = CurrentDataTable();
+			
+			// USER PARAMETERS
+			// List of tags
+			original_querylist = Expr(querylist); 
+			print("Original list of tags: ", original_querylist);
+			
+			
+			// Get tags from table
+			print("Getting all tagnames (including new if any)");
+			colNames = dt << Get Column Names("String");
+			
+			print("Creating data dictionaries");
+			dict_colNames = Associative Array();
+			dict_tagNames = Associative Array();
+			
+			print("Iterating through current column names");
+			For(i = 1, i <= N Items(colNames), i++,
+				addin_colname = Column(dt, colNames[i]) << Get Property("addin_colname");
+				colName = colNames[i];
+				print("Getting name for column: ", colName);
+				Insert Into(dict_colNames, addin_colname, colName);
+				
+				tagname = Column(dt, colNames[i]) << Get Property("tagname");
+
+				if(tagname != Empty(),
+					print("Getting tagname for column: ", colName);
+					Insert Into(dict_tagNames, addin_colname, tagname));
+			);
+
+			show(dict_colNames);
+
+			querylist = dict_tagNames << Get Values;
+
+			//show(querylist);
+			print("Final list of tags:", querylist);
+			
+			
+			// Server
+			MES = Expr(MES);
+			NetworkNode = Expr(NetworkNode);
+			SiteName = Expr(SiteName);
+			print("Server Address", MES);
+			
+			print("Recovering extraction parameters...");
+			
+			// Period
+			Period = Expr(Period); // Period [in seconds for PI]
+			print("Period for SQL [s]: ", Period);
+			
+			local_to_UTC_time_diff_in_s = Expr(local_to_UTC_time_diff_in_s);
+			print("time difference between local time and UTC time in [s]", local_to_UTC_time_diff_in_s);
+			// Type of extraction...
+			selected = Expr(selected); 
+			
+			// ...which corresponds to
+			Request = Expr(Request); 
+			TablePI = Expr(TablePI);
+			SQL_InterpolatedPI = Expr(SQL_InterpolatedPI);
+
+			print("Creating OLEDB connector");
+			
+			addin_path = "$ADDIN_HOME(MES_ADDIN)";
+			ps_path = ConvertFilePath( addin_path || "/OLEDB_extract.ps1", windows);
+			// Creates function to call OLEDB via Powershell
+			ExecuteOLEDB = Function({ps_path, MES, SQL_query},
+			command = "powershell -ExecutionPolicy Bypass -File " || ps_path || " " || MES || " \!"" || SQL_query || "\!"" ;
+			write("\!n", command, "\!n" );
+			query_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", command} ),
+			ReadFunction( "blob" ) // returns all text	
+			);
+			Return(query_result););
+		
+			print("Starting sequence to update table...");
+			// Iterate trough tags
+			dt = CurrentDataTable();
+			
+			n_tags = N Items( querylist );
+			numRows = N Rows( dt );
+			show(numRows);
+			
+			Try( print("Getting last record from table (TS_UTC)...");
+			TS_UTC_start_date = ColMax(TS_UTC)+Num(Period);//<<format("yyyy-mm-ddThh:mm:ss");
+			//TS_start_date = ColMax(dt:TS)+Num(Period);//<<format("yyyy-mm-ddThh:mm:ss");
+			,
+			print("'TS_UTC' does not exist, please extract the data again using the addin");
+			ErrorWindow =  NewWindow("Error :/", <<Modal,
+				  Textbox("'TS_UTC' column does not exist. \!N Please extract the data again using the addin."));
+			Throw(); // stops execution
+			);
+			
+			print("Getting current Local server time");
+			SQL_local_time ="SELECT format(date('*'), 'yyyy-MM-dd HH:mm:ss') as ServerDateTime";
+			query_result = ExecuteOLEDB(ps_path, NetworkNode, SQL_local_time);
+			dt_server_local_time = Open( query_result, "text" );
+		
+			ServerDateTime_value = Column(dt_server_local_time, "ServerDateTime")[1];
+			TS_end_date = Floor(ServerDateTime_value/Num(Period))*Num(Period);
+			//TS_end_date = Floor(Today()/Num(Period))*Num(Period);
+			
+			Close(dt_server_local_time, nosave);
+			
+			
+			//Transforming localtime to UTC
+			TS_UTC_end_date = TS_end_date + local_to_UTC_time_diff_in_s;
+			
+					
+			if(TS_UTC_start_date>=TS_UTC_end_date,
+				print("Table is already updated");
+				Throw();
+				);
+			
+			start = TS_UTC_start_date - local_to_UTC_time_diff_in_s;
+			startformat = Format( start, "yyyy-mm-ddThh:mm:ss" );
+			Print("Starting DateTime (in data table): ", startformat, "\!N");
+		
+
+			end = TS_UTC_end_date - local_to_UTC_time_diff_in_s;
+
+			
+			// Capping the n rows
+			Pd = Num(Period);
+			is_nrow_limited = 0;
+			n_estimated_rows = (end - start)/Pd;
+			print("The extraction is estimated to have:", n_estimated_rows, "rows");
+			
+			n_rows_limit_PI = Expr(n_rows_limit_PI);
+			
+			// Limiting the number of rows to avoid timeout and protect the server
+			if(n_estimated_rows > n_rows_limit_PI,
+				print("Limit exceded, reducing the end date");
+				end = start + Pd*n_rows_limit_PI;
+				is_nrow_limited = 1;
+				
+				print("Given the size of the extraction (" || char(n_estimated_rows) || " rows per tag),
+				  your selected 'End Time' will be modified.
+				  
+				  The 'Update' table script can complete the extraction. This will allow you to save the extraction while reducing the overload in the MES server.
+				  
+				  Please inform your MES Point of Contact and plannify the big data extraction accordingly.");
+			);
+			
+			endformat = Format( end, "yyyy-mm-ddThh:mm:ss" );
+			Print("Ending DateTime (in data table): ", endformat, "\!N");	
+			
+			Print("Re-connecting to MES server to update table");
+			
+			//SQL_query = "SELECT c.tag as NAME, format(c.time, 'yyyy-MM-dd HH:mm:ss') as TS, format(c.__utctime, 'yyyy-MM-dd HH:mm:ss') as TS_UTC, CASE p.pointtype WHEN 'D' THEN DIGSTRING(CAST(c.value as int32)) ELSE CAST(c.value AS STRING) END as VALUE, p.descriptor as DESCR, p.engunits as EU FROM [pipoint]..[pipoint] p, [piarchive]..["|| TablePI ||"] c WHERE p.tag = 'tagname' AND c.tag = p.tag AND c.time BETWEEN '"|| startformat ||"' AND '"|| endformat ||"'"|| SQL_InterpolatedPI;
+			//SQL_query = "SELECT c.tag as NAME, format(c.time, 'yyyy-MM-dd HH:mm:ss') as TS, format(c.__utctime, 'yyyy-MM-dd HH:mm:ss') as TS_UTC, CASE p.pointtype WHEN 'D' THEN DIGSTRING(CAST(c.value as int32)) ELSE CAST(c.value AS STRING) END as VALUE, p.descriptor as DESCR, p.engunits as EU FROM [pipoint]..[pipoint] p, [piarchive]..["|| TablePI ||"] c WHERE p.tag = 'tagname' AND c.tag = p.tag AND c.time BETWEEN '"|| startformat ||"' AND '"|| endformat ||"'"|| SQL_InterpolatedPI;
+
+			SQL_query = "SELECT c.tag as NAME, format(c.time, 'yyyy-MM-dd HH:mm:ss') as TS, format(c.__utctime, 'yyyy-MM-dd HH:mm:ss') as TS_UTC, CASE p.pointtype WHEN 'D' THEN DIGSTRING(CAST(c.value as int32)) ELSE CAST(c.value AS STRING) END as VALUE, p.descriptor as DESCR, p.engunits as EU, p.pointtype as tagtype FROM [pipoint]..[pipoint] p, [piarchive]..["|| TablePI ||"] c WHERE p.tag = 'tagname' AND c.tag = p.tag AND c.time BETWEEN '"|| startformat ||"' AND '"|| endformat ||"'"|| SQL_InterpolatedPI;
+			SQL_query = Substitute( SQL_query,"\!t", " ");
+			SQL_query = Substitute(SQL_query,"\!r", " ");
+			
+			fpostprocessing = Function( {dt_new},
+				print("Tag extracted, starting post-processing routines");
+			
+				dt_new << New Column( "tag_unit_description",
+					Formula(Char( :NAME ) || 
+					" (" || Char( :DESCR ) || ") [" || 
+					Char( :EU ) || "]" ) );	
+		
+		
+				print("Summarizing stacked table");
+			
+				Try(Data Table(dt_summary);
+					SummarytableExist = 1;
+					,
+					SummarytableExist = 0);
+			
+				if(SummarytableExist == 0, 
+					dt_summary = dt_new << Summary(
+							Group( :NAME, :DESCR, :EU ),
+							Mean( Column (dt_new, "VALUE") ), 
+							Std Dev( Column (dt_new, "VALUE") ), 
+							Max( Column (dt_new, "VALUE") ), 
+							Min( Column (dt_new, "VALUE") ), 
+							Range( Column (dt_new, "VALUE") ),
+							Freq( "None" ),
+							Weight( "None" ),
+							Link to original data table( 0 ) 
+						);
+					dt_summary << SetName("Summary table");
+					
+					dt_summary << New Column( "tag_unit_description",
+						Formula(Char( :NAME ) || 
+						" (" || Char( :DESCR ) || ") [" || 
+						Char( :EU ) || "]" ) );	
+					
+					dt_summary:tag_unit_description << Hide(1);
+					
+					);
+					
+					
+				if(SummarytableExist == 1, 	
+					dt_summary_new = dt_new << Summary(
+							Group( :NAME, :DESCR, :EU ),
+							Mean( Column (dt_new, "VALUE") ), 
+							Std Dev( Column (dt_new, "VALUE") ), 
+							Max( Column (dt_new, "VALUE") ), 
+							Min( Column (dt_new, "VALUE") ), 
+							Range( Column (dt_new, "VALUE") ),
+							Freq( "None" ),
+							Weight( "None" ),
+							Link to original data table( 0 ) 
+						);
+						
+					dt_summary = dt_summary << Concatenate ( dt_summary_new, append to first table(1));
+					Close( dt_summary_new, nosave ); // comment this line to leave table open
+					);
+			
+			// Tansposing stacked table so the tags are shown as independent columns
+			
+				Try(DataTable(dt_transposed);
+					TransposedtableExist = 1;
+					,
+					TransposedtableExist = 0);
+				
+				if(TransposedtableExist == 0, 
+					print("Transposing table to have tags as columns");
+					dt_transposed = dt_new << Split(
+							Split By( :tag_unit_description ),
+							Split( Column (dt_new, "VALUE") ), 
+							Group( :TS, :TS_UTC ),
+							Remaining Columns( Drop All ),
+							Sort by Column Property
+					););
+					
+				if(TransposedtableExist == 1, 	
+					print("Transposing additional table to have tags as columns");
+					dt_transposed_new = dt_new << Split(
+							Split By( :tag_unit_description ),
+							Split( Column (dt_new, "VALUE") ), 
+							Group( :TS, :TS_UTC ),
+							Remaining Columns( Drop All ),
+							Sort by Column Property
+					);
+					// Update data tables
+					dt_transposed << Update(
+						With( dt_transposed_new ),
+						Match Columns( :TS_UTC = :TS_UTC ),
+						Replace Columns in Main Table( None )
+					);
+					Close( dt_transposed_new, nosave ); // comment this line to leave table open
+					
+				);
+				
+			);
+			
+			Try(DeleteSymbols(dt_summary)); // << SetName("Previous summary table"));
+			
+			//dt_transposed = dt;
+			Try(DeleteSymbols(dt_transposed));// << SetName("Previous extraction"));
+		
+		
+			
+		// Extracting all tags (PI update)
+		n_tags_all = NItems(querylist);
+		n_tags_extracted = 0;
+		isExtracting = 1;
+		extracted_querylist = {};
+		n_attempts = 0;
+		max_n_attempts = 10;
+		
+		while(isExtracting & n_attempts<=max_n_attempts, 
+		
+		// Removes extracted tags from querylist (in case for loop breaks due to extract errors) 
+		querylist_dict = AssociativeArray(querylist, 1::NItems(querylist));
+		querylist = (querylist_dict << Remove(AssociativeArray(extracted_querylist)) << get keys)[Rank(querylist_dict << get values)];
+		n_tags = NItems(querylist);
+		For ( i = 1, i <= NItems(querylist), i++,
+			// Timer (per tag)
+			ts_tag_extracton_starts = AsDate(Today());
+			
+			tag = querylist[i];
+			
+			print("Extracting tag:", tag);
+			
+			str_info_extraction = char(i) || " of " || char(n_tags) || " tags ";
+			
+			if(i==1,
+				str_info_extraction = str_info_extraction || "(estimating time)";,
+				str_info_extraction = str_info_extraction || char(::t_remaining_min) || " min left";
+				);
+				
+			print( str_info_extraction );
+					
+			
+			SQL_query = substitute(SQL_query, "tagname", tag);
+			
+			query_result = ExecuteOLEDB(ps_path, NetworkNode, SQL_query);
+			
+			dt_temp = Open( query_result, "text" );
+			
+			dt_temp << SetName( "Table with concatenated PI data");
+			print("New data table created (stacked format)");
+			
+			// If table is changed, n_columns must assert this condition to continue:
+			if(not(ncols(dt_temp)==7),
+				Print("Something went wrong with the PI extraction.", query_result);
+				Print("Trying to connect to the server again, JMP will wait the n_attempts in seconds");
+				Close( dt_temp, nosave );
+				OpenLog();
+				
+				n_attempts = n_attempts+1;
+				
+				if(n_attempts>max_n_attempts,
+					Try(Close( dt_transposed, nosave ));
+					Throw("The connection to the server failed during the extraction. Please try again later.");
+				);	
+				
+				show(n_attempts);
+				Wait(n_attempts);
+				try(dt_transposed << showwindow(0));
+				try(dt_summary << showwindow(0));
+				Break(); // exiting for loop
+			);
+			
+			
+			// If there are no rows does not postprocess table
+			if(nrows(dt_temp)>0,
+				fpostprocessing(dt_temp);,
+				show(tag);
+				Print("No information to extract for this tag (probably a no numeric data type)");
+			);
+			
+			Close( dt_temp, nosave ); // Comment this to debug
+			
+			print("Tag was extracted properly");
+			InsertInto( extracted_querylist, tag );	
+			
+			print("Changing back the SQL_query string");		
+			SQL_query = substitute(SQL_query, tag, "tagname");	
+			
+			// Timer (per tag)
+			ts_tag_extracton_ends = AsDate(Today());
+			
+			ts_tag_extraction_s = Date Difference( ts_tag_extracton_starts, ts_tag_extracton_ends, "Second", "start" );
+			
+			::t_remaining_min = Ceiling((ts_tag_extraction_s*(n_tags - i))/60);
+			
+			show(ts_tag_extraction_s);
+			show(::t_remaining_min);
+			
+			n_tags_extracted = n_tags_extracted+1;	
+			
+			); // ends for loop to extract tags one by one
+			
+			if(nitems(extracted_querylist) == n_tags_all,
+				print("All tags extracted succesfully");
+				isExtracting = 0;);
+			
+			); // ends while loop (in case for loop fails de to timeout)
+						
+			/// removes source code in script window
+			script_names = dt_transposed<<get table script names;
+			dt_transposed<<delete scripts(script_names);
+			
+			Column(dt_transposed, "TS_UTC") <<data type(numeric)<<modeling type(continuous)<<format("yyyy-mm-ddThh:mm:ss");
+			
+			print("Matching user names to original tag+descr+names");
+			new_colNames = dt_transposed << Get Column Names( "String" );
+
+			Print( "Iterating through new column names" );
+			For( i = 1, i <= N Items( new_colNames ), i++,
+				new_colName = new_colNames[i];
+				user_colname = dict_colNames << Get Value(new_colName);
+				Print( "Changing name for column:", new_colName );
+				Column( dt_transposed, new_colName ) << Set Name(user_colname);
+				Print("To user column name:", user_colname);
+			);
+			
+			print("Joining orignal with new table");
+			
+			//Print( "Joining orignal with new table" );
+			/* // FIXME (Update does not work, it creates new table)
+
+			dt = dt << Join(
+				With( dt_new_transposed ),
+				Update,
+				By Matching Columns( :TS_UTC = :TS_UTC ),
+				Drop multiples( 0, 1 ),
+				Include Nonmatches( 1, 1 ),
+				Preserve main table order( 1 )
+			);
+			*/
+			
+			dt << Concatenate(dt_transposed, "Append to first table");
+			
+			Close( dt_transposed, nosave );
+			Close( dt_summary, nosave)
+		
+		 ))); // Ends Update to Now Script for PI
+		 
+		 dt_transposed << NewScript( "Refresh table",
+			print("This script will get new data from MES while keeping the same number of rows.
+			// It is specially useful in case you want to create daily, weekly or monthly reports
+			// witout having to adjust plots.
+			
+			// As with the Update Table() script, it requires to have the TS_UTC (timestamp with UTC format) intact
+			
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+			
+			dt = CurrentDataTable();
+
+			numRows = N Rows( dt );
+			show(numRows);
+			
+			index_selected_rows = dt << GetSelectedRows();
+
+			dt << RunScript( "Update table" );
+			
+			numRows_updated = N Rows( dt );
+			show(numRows_updated);
+
+			n_new_rows = numRows_updated - numRows;
+			
+			if(n_new_rows>0,
+			// New data added
+			dt << Sort(
+				By( :TS_UTC ),
+				Replace Table,
+				Order( Ascending ),
+				Copy formula( 0 ));
+
+
+			dt << Clear Select;
+			dt << SelectRows( Index( 1, n_new_rows ) );
+			dt << DeleteRows();
+			dt << SelectRows( index_selected_rows);
+			
+			, // No new data added
+			 print("No new data was availaible");)
+			
+			// FIXME (highlight row)
+			//dt << SelectRows(index_selected_rows)
+			
+			); //End refresh table for PI
+
+	Eval(EvalExpr(dt_transposed << NewScript( "Add new tags",
+			
+			print("This script downloads data from new tags after the extraction.
+			
+			// In case of bugs, requests or success stories (!) feel free to contact us
+			// https://github.com/industrial-data/JMP-MES-connector");
+			
+			win = New Window( "Extracting new tags",
+					<<Modal,
+					<<Return Result,
+						Line Up Box( N Col( 2 ), Spacing( 5 ),
+						Panel Box( "Tagnames only",
+								userlist = List Box( {}, nlines=10 )),
+							Button Box( "Paste", 
+								copiedtags=get clipboard();
+								//taglist=Words(copiedtags,"\[\!t\!r\!n]\");
+								new_taglist=Words(copiedtags,"\!t\!r\!n");
+								show(new_taglist);
+								userlist<<Append(new_taglist); );,
+							
+								Button Box( "Remove all", 
+								userlist<<Remove All; )
+
+							
+						),
+					
+
+				);
+				 
+
+			if(win["Button"] == -1, // canceled
+					print("Canceled by user");
+					Throw();
+					);
+					
+			print("New tags requested to be extracted");
+			
+			show(new_taglist);
+			
+			dt_main = CurrentDataTable();
+			
+			// Get tags from original table
+			print("Getting already extracted tagnames (including new if any)");
+			colNames = dt_main << GetColumnNames("String");
+			
+			print("Creating data dictionaries");
+			
+			dict_UsertagNames = Associative Array(new_taglist);
+			show(dict_UsertagNames);
+			
+			dict_tagNames = Associative Array();
+			
+			print("Iterating through data table column names");
+			For(i = 1, i <= N Items(colNames), i++,
+				colName = colNames[i];
+				
+				tagname = Column(dt_main, colName) << Get Property("tagname");
+
+				if(tagname != Empty(),
+					print("Getting tagname for column: ", colName);
+					dict_tagNames << Insert (tagname, colName));
+			);
+
+			Show( dict_tagNames );
+			intersection = dict_tagNames;
+			intersection << Intersect( dict_UsertagNames );
+			Print( "common (intersection) tags:", intersection << getkeys );
+
+			dict_UsertagNames << Remove( intersection );
+			show(dict_UsertagNames);
+
+			Try( querylist = dict_UsertagNames << Get Keys,
+				Throw( "No new tags to extract (there were already in the data table)." )
+			);
+			
+			print("New tags to extract after removing duplicates", querylist);
+			
+			//querylist = {"IN_TI_X1_2.PV", "TI_G59_8.PV", "P-G99_11.XJ01"};
+			
+			/// remove source code in script window
+			main_script_names = AssociativeArray(dt_main<<get table script names);
+		
+			numRows = N Rows( dt_main );
+			show(numRows);
+			
+			// Getting user names in case it changed originals
+			Print( "Creating data dictionaries" );
+			colNames = dt_main << Get Column Names( "String" );
+			dict_colNames = Associative Array();
+			Print( "Iterating through current column names" );
+			For( i = 1, i <= N Items( colNames ), i++,
+				colName = colNames[i];
+				addin_colname = Column( dt_main, colName ) <<
+				Get Property( "addin_colname" );
+				
+				Print( "Getting original addin name for column: ", colName );
+				Insert Into( dict_colNames, addin_colname, colName );
+			);
+			
+			show(dict_colNames);
+			user_TS = dict_colNames << Get Value("TS");
+			print("User TS (TimeStamp) column name", user_TS);
+		
+			// Period
+			Period = Num(Expr(Period)); // Period [in seconds for PI]
+			print("Period for SQL [s]: ", Period);
+			
+			local_to_UTC_time_diff_in_s = Expr(local_to_UTC_time_diff_in_s);
+			print("time difference between local time and UTC time in [s]", local_to_UTC_time_diff_in_s);
+			
+				
+			Try( print("Getting first and last record from table (TS_UTC)...");
+			TS_UTC_mainstart_date = ColMin(dt_main:TS_UTC);
+			TS_UTC_mainend_date = ColMax(dt_main:TS_UTC);
+			,
+			print("'TS_UTC' column does not exist, please extract the data again using the addin");
+			ErrorWindow =  NewWindow("Error :/", <<Modal,
+				  Textbox("'TS_UTC' column does not exist. \!N Please extract the data again using the addin."));
+			Throw(); // stops execution
+			);
+			
+			
+			dt_new_ext = dt_main << Subset(
+				Selected Rows( 0 ),
+				Rows( Matrix({1}) ),//Matrix({1, numRows}) 
+				columns( Column(dt_main,user_TS), dt_main:TS_UTC));
+			
+			Column(dt_new_ext, user_TS)[1] = Column(dt_new_ext, user_TS)[1] - Period;
+			dt_new_ext:TS_UTC[1] = dt_new_ext:TS_UTC[1] - Period;
+
+			n_tags = N Items( querylist );
+			show(n_tags);
+			
+			odb_querylist = Substitute( Char( querylist ), "{", "(", "}", ")","\!"","'" );
+
+			write(odb_querylist);
+		
+			// Get info from main table
+			numRows = N Rows( dt_main );
+			show(numRows);
+			
+			// Server
+			MES = Expr(MES);
+			NetworkNode = Expr(NetworkNode);
+			SiteName = Expr(SiteName);
+
+			print("Server Address", MES);
+			
+			print("Recovering extraction parameters...");
+			
+			print("Creating OLEDB connector");
+			
+			addin_path = "$ADDIN_HOME(MES_ADDIN)";
+			ps_path = ConvertFilePath( addin_path || "/OLEDB_extract.ps1", windows);
+			
+			if(Not(FileExists(ps_path)),
+				Throw("PI connector does not exist, please open MES addin and check you can search tags in it");
+			);
+			
+			// Creates function to call OLEDB via Powershell
+			ExecuteOLEDB = Function({ps_path, MES, SQL_query},
+			command = "powershell -ExecutionPolicy Bypass -File " || ps_path || " " || MES || " \!"" || SQL_query || "\!"" ;
+			write("\!n", command);
+			query_result = RunProgram(
+			Executable( "cmd.exe" ),
+			Options( {"/C", command} ),
+			ReadFunction( "blob" ) // returns all text	
+			);
+			Return(query_result););
+					
+			// Queries the server to find tag names, descriptions and units 
+			SQL_tag = "SELECT tag as tagnames, descriptor as descriptions, engunits as units, pointtype as tagtype FROM [pipoint]..[pipoint] WHERE tag IN "|| odb_querylist;
+			
+			query_tags = ExecuteOLEDB(ps_path, NetworkNode, SQL_tag);
+			
+			Try(dt_tagtable = Open( query_tags, "text" );,
+				Close( dt_new_ext, nosave );
+				Throw("Please, check that your tagnames are correct and your connection to Enterprise Net (or VPN)");
+				);
+			
+			
+			show(Type(dt_tagtable));
+			If( Type( dt_tagtable ) != "Table",
+				Throw( "Check that you have access to the server and your connection to the Enterprise Network (or VPN)" )
+			);
+						
+			If( N cols( dt_tagtable ) != 4,
+				Close( dt_tagtable, nosave );
+				Close( dt_new_ext, nosave );
+				Throw( "Please, check that all your tagnames are correct and your connection to the Enterprise Network (or VPN)" );
+				);
+			
+			dt_tagtable << SetName("Tag search results");
+			
+			// Create new column containing tagname (descr) [units]
+			dt_tagtable << NewColumn( "tag_desc_units", Formula( :tagnames || " (" || :descriptions || ") "|| "[" || :units || "]"));
+			
+			
+			//list of tagnames_desc_units from extraction
+			tag_desc_units_list = Column(dt_tagtable, "tag_desc_units") << Get Values;
+			
+			//Close(dt_tagtable, nosave);
+			n_new_tags = NRows(dt_tagtable);
+			lst_new_tagnames = Column(dt_tagtable, "tagnames") << Get Values;
+			lst_new_colnames = Column(dt_tagtable, "tag_desc_units") << Get Values;
+			lst_new_coltypes = Column(dt_tagtable, "tagtype") << Get Values;
+			
+			
+			print("Creating columns and metadata as properties");
+			For(i = 1, i <= n_new_tags, i++,
+				new_tagname = lst_new_tagnames[i];
+				new_colname = lst_new_colnames[i];
+				new_coltype = lst_new_coltypes[i];
+				
+				if(new_coltype == "D", 
+				dt_new_ext << New Column(new_colname, Character);,
+				dt_new_ext << New Column(new_colname, Numeric););
+				
+				Column(dt_new_ext, new_colname) << Set Property("tagname", new_tagname);
+				Column(dt_new_ext, new_colname) << Set Property("addin_colname", new_colname);
+				);
+		
+		Close( dt_tagtable, nosave ); // comment this line to leave concat table open
+		dt_new_ext << RunScript( "Update table" );
+		
+
+		// Update data tables
+			dt_main << Update(With( dt_new_ext ),
+			Match Columns( :TS_UTC = :TS_UTC ));
+		Close( dt_new_ext, nosave ); // comment this line to leave concat table open
+		
+		print("Cleaning new scripts added after the update");
+		main_script_names_after_update = AssociativeArray(dt_main<<get table script names);
+		
+		uncommon_scripts = main_script_names_after_update;
+		uncommon_scripts << Remove( main_script_names );
+		list_uncommon_scripts = uncommon_scripts << Get Keys;
+		show(list_uncommon_scripts);
+		dt_main << Delete Scripts( list_uncommon_scripts );
+		
+		 ))); // Ends Add new column Script for PI
+
+
+	); // end PI extraction
+
+print("Extraction finished");
+
+// Time
+ts_extraction_ends = AsDate(Today());
+show(ts_extraction_ends);
+
+ts_elapsed_min = Date Difference( ts_extraction_starts, ts_extraction_ends, "Minute", "start" );
+		
+show(ts_elapsed_min);
+
+	
+);//END  okButtonPress
+
+
+
+NowButtonPress=Function({this},
+	// This function is called when the button is pressed
+	Period = Period_box << Get Text;
+	show(Period);
+	
+	period_units = Period_box_units << Get Selected;
+	show(period_units);
+	
+	if (period_units == "seconds", 
+		Pd = Num(Period);	
+		);
+		
+	if (period_units == "minutes", 
+		Pd = Num(Period) * 60;
+		);
+				
+	if (period_units == "hours", 
+		Pd = Num(Period) * 60 * 60;	
+		);
+			
+	if (period_units == "days", 
+		Pd = Num(Period)* 24* 60 * 60;	
+		);
+				
+	end = end_time << set(Floor(Today()/Pd)*Pd);
+);
+
+
+
+PasteButtonPress=Function({this},
+	// This function is called when the button is pressed
+	copiedtags=get clipboard();
+	taglist=Words(copiedtags,"\!t\!r\!n");
+	List2<<Append(taglist);
+);
+
+
+RemoveTagsButtonPress=Function({this},
+	// This function is called when the button is pressed
+	List2<<Remove All;
+);
+
+ServerListSelected = Function({this},
+	// This function is called when user selects a different server from the list
+	
+	print("Configuring server details based on user selection");
+	
+	selected_MES_index = List9 << Get Selected Indices;
+	show(selected_MES_index);
+	
+    user_MES= Arg(ServerURLs, selected_MES_index);	
+	ServerAddress_userbox << Set Text(user_MES);
+	show(user_MES);
+	
+	user_ServerExtension = Arg(Extensions, selected_MES_index); 
+	Extension_userbox << Set Text(user_ServerExtension);
+	show(user_ServerExtension);
+	
+	user_shortname = Arg(Shortnames, selected_MES_index); 
+	Shortname_userbox << Set Text(user_shortname);
+	show(Shortname_userbox);
+	
+	
+	user_ServerType = Arg(ServerTypeList, selected_MES_index);
+	show(user_ServerType);
+	
+	if(user_ServerType == "IP21",
+	user_servery_type_radiobox << set(1););
+	
+	if(user_ServerType == "PI",
+	user_servery_type_radiobox << set(2););
+);
+
+Edit_server_address_checkbox_chages = Function({this},
+
+is_checked = Edit_server_address_checkbox << Get();
+
+if (is_checked == 1,
+	Server_address_panel << Visibility( "Visible" );
+	);
+
+if (is_checked == 0,
+	Server_address_panel << Visibility( "Collapse" );
+	);
+	
+);
+
+RoundButtonPress = Function( {this},
+	start = start_time << get();
+	
+	Period = Period_box << Get Text;
+	show(Period);
+	
+	period_units = Period_box_units << Get Selected;
+	show(period_units);
+	
+	if (period_units == "seconds", 
+		Pd = Num(Period);	
+		);
+		
+	if (period_units == "minutes", 
+		Pd = Num(Period) * 60;
+		);
+				
+	if (period_units == "hours", 
+		Pd = Num(Period) * 60 * 60;	
+		);
+			
+	if (period_units == "days", 
+		Pd = Num(Period)* 24 * 60 * 60;	
+		);
+		
+	start_time << set( Floor( start/ Pd ) * Pd );
+);
+
+
+load_serverlist_userbox_changes = Function({this},
+
+	::edited_serverlist = serverlist_userbox << Get Text;
+	print("Serverlist address changed by user");
+	List9 << Remove All;
+	Try(::selected_MES_index_recall=1);
+	Try(f_loading_server_list());
+);
+
+
+// TODO adjust  time wich user selection
+
+/*
+Period_box_unitsSelect=Function({this},{selected},
+	// This function is called when the Radio Box selection changes
+	selected = this << Get Selected;
+	
+	
+	Period = Period_box << Get Text;
+	show(Period);
+	
+	period_units = Period_box_units << Get Selected;
+	show(period_units);
+	
+	show(period_units_previous);
+	
+	if (period_units == "seconds", 
+		Pd_s = Num(Period);
+		//Period_box << Set Text(Char(Pd_s));	
+		);
+		
+	if (period_units == "minutes", 
+		Pd_s = Num(Period) * 60;
+		//Period_box << Set Text(Char(Pd_s));
+		);
+				
+	if (period_units == "hours", 
+		Pd_s = Num(Period) * 60 * 60;	
+		);
+			
+	if (period_units == "days", 
+		Pd_s = Num(Period)* 24 * 60 * 60;	
+		);
+);
+*/
+
+
+// TODO, learn how to call external functions from the end of this script
+
+
+
+
+)), Allocate(Lineup1 = Lineup Box(); Panel8 = Panel Box(); List9 = List Box(); Edit_server_address_checkbox = Check Box(); Server_address_panel = Panel Box(); List24 = V List Box(); List22 = H List Box(); user_servery_type_radiobox = Radio Box(); List23 = V List Box(); Panel12 = Panel Box(); ServerAddress_userbox = Text Edit Box(); Panel13 = Panel Box(); Extension_userbox = Text Edit Box(); Panel14 = Panel Box(); Shortname_userbox = Text Edit Box(); Panel15 = Panel Box(); serverlist_userbox = Text Edit Box(); serverlist_button = Button Box(); Panel4 = Panel Box(); Lineup2 = Lineup Box(); List21 = H List Box(); Panel10 = Panel Box(); Tagf = Text Edit Box(); FindTagButton = Button Box(); Panel11 = Panel Box(); Tagf_description = Text Edit Box(); List10 = V List Box(); Panel1 = Panel Box(); List13 = H List Box(); start_time = Number Edit Box(); RoundButton = Button Box(); Panel2 = Panel Box(); List12 = H List Box(); end_time = Number Edit Box(); NowButton = Button Box(); List18 = H List Box(); List4 = V List Box(); Text1 = Text Box(); List1 = List Box(); List17 = V List Box(); Move_tags_button_box = Button Box(); Remove_tags_button_box = Button Box(); List3 = V List Box(); List20 = H List Box(); Text2 = Text Box(); PasteButton = Button Box(); List2 = List Box(); List8 = V List Box(); RemoveTagsButton = Button Box(); List15 = V List Box(); Outline1 = Outline Box(); PanelBox = Panel Box(); MethodOption = Radio Box(); Panel7 = Panel Box(); Period_box = Text Edit Box(); Period_box_units = Radio Box(); Panel9 = Panel Box(); okButton = Button Box(); List16 = H List Box(); Text3 = Text Box()), Organize(Reparent(List16(Text3)); Reparent(Outline1(List16)); Reparent(Panel9(okButton)); Reparent(Outline1(Panel9)); Reparent(Panel7(Period_box_units)); Reparent(Panel7(Period_box)); Reparent(Outline1(Panel7)); Reparent(PanelBox(MethodOption)); Reparent(Outline1(PanelBox)); Reparent(List15(Outline1)); Reparent(Lineup1(List15)); Reparent(List8(RemoveTagsButton)); Reparent(List3(List8)); Reparent(List3(List2)); Reparent(List20(PasteButton)); Reparent(List20(Text2)); Reparent(List3(List20)); Reparent(Lineup1(List3)); Reparent(List17(Remove_tags_button_box)); Reparent(List17(Move_tags_button_box)); Reparent(Lineup1(List17)); Reparent(List4(List1)); Reparent(List4(Text1)); Reparent(List18(List4)); Reparent(Lineup1(List18)); Reparent(List12(NowButton)); Reparent(List12(end_time)); Reparent(Panel2(List12)); Reparent(List10(Panel2)); Reparent(List13(RoundButton)); Reparent(List13(start_time)); Reparent(Panel1(List13)); Reparent(List10(Panel1)); Reparent(Lineup1(List10)); Reparent(Panel11(Tagf_description)); Reparent(Lineup2(Panel11)); Reparent(List21(FindTagButton)); Reparent(Panel10(Tagf)); Reparent(List21(Panel10)); Reparent(Lineup2(List21)); Reparent(Panel4(Lineup2)); Reparent(Lineup1(Panel4)); Placeholder(Lineup1); Reparent(Panel15(serverlist_button)); Reparent(Panel15(serverlist_userbox)); Reparent(List24(Panel15)); Reparent(Panel14(Shortname_userbox)); Reparent(List23(Panel14)); Reparent(Panel13(Extension_userbox)); Reparent(List23(Panel13)); Reparent(Panel12(ServerAddress_userbox)); Reparent(List23(Panel12)); Reparent(List22(List23)); Reparent(List22(user_servery_type_radiobox)); Reparent(List24(List22)); Reparent(Server_address_panel(List24)); Reparent(Panel8(Server_address_panel)); Reparent(Panel8(Edit_server_address_checkbox)); Reparent(Panel8(List9)); Reparent(Lineup1(Panel8)); Relocate(Lineup1(6, 8))), Initialize(Lineup1 << NCol(4); Lineup1 << Background Color(2147483647); Lineup1 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Lineup1 << Enabled(1); Lineup1 << Horizontal Alignment("Default"); Lineup1 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Lineup1 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Lineup1 << Text Color(2147483647); Lineup1 << UI Only(0); Lineup1 << Vertical Alignment("Default"); Lineup1 << Visibility("Visible"); Lineup1 << Set Min Size(1268, 1286); Lineup1 << Set Max Size(1268, 1286); Lineup1 << Set Stretch({"Neutral", "Neutral"}); Lineup1 << Spacing(2); Panel8 << Background Color(2147483647); Panel8 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel8 << Enabled(1); Panel8 << Horizontal Alignment("Left"); Panel8 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel8 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel8 << Text Color(2147483647); Panel8 << UI Only(0); Panel8 << Vertical Alignment("Default"); Panel8 << Visibility("Visible"); Panel8 << Set Min Size(419, 756); Panel8 << Set Max Size(419, 756); Panel8 << Set Stretch({"Neutral", "Neutral"}); Panel8 << Set Title("Server"); List9 << Background Color(2147483647); List9 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List9 << Enabled(1); List9 << Horizontal Alignment("Default"); List9 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List9 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List9 << Text Color(2147483647); List9 << UI Only(0); List9 << User Resizable({1, 1}); List9 << Vertical Alignment("Bottom"); List9 << Visibility("Visible"); List9 << Set Items({}); List9 << Set Max Selected(1); List9 << Set Size(350, 106); List9 << Set N Lines(6); List9 << Set Function(ServerListSelected); List9 << Set Base Font("Text"); List9 << Set Font Scale(1); List9 << Set Min Size(200, 106); List9 << Set Max Size(500, 106); List9 << Set Stretch({"Off", "Off"}); Edit_server_address_checkbox << Background Color(2147483647); Edit_server_address_checkbox << Border({Left(0), Top(0), Right(0), Bottom(0)}); Edit_server_address_checkbox << Enabled(1); Edit_server_address_checkbox << Horizontal Alignment("Default"); Edit_server_address_checkbox << Margin({Left(2), Top(2), Right(2), Bottom(2)}); Edit_server_address_checkbox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Edit_server_address_checkbox << Text Color(2147483647); Edit_server_address_checkbox << UI Only(0); Edit_server_address_checkbox << Vertical Alignment("Default"); Edit_server_address_checkbox << Visibility("Visible"); Edit_server_address_checkbox << Set Min Size(118, 16); Edit_server_address_checkbox << Set Max Size(118, 16); Edit_server_address_checkbox << Set Stretch({"Neutral", "Neutral"}); Edit_server_address_checkbox << Set Items({"Edit server address"}); Edit_server_address_checkbox << Set Function(Edit_server_address_checkbox_chages); Server_address_panel << Background Color(2147483647); Server_address_panel << Border({Left(0), Top(0), Right(0), Bottom(0)}); Server_address_panel << Enabled(1); Server_address_panel << Horizontal Alignment("Default"); Server_address_panel << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Server_address_panel << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Server_address_panel << Text Color(2147483647); Server_address_panel << UI Only(0); Server_address_panel << Vertical Alignment("Default"); Server_address_panel << Visibility("Visible"); Server_address_panel << Set Min Size(383, 536); Server_address_panel << Set Max Size(383, 536); Server_address_panel << Set Stretch({"Neutral", "Neutral"}); Server_address_panel << Set Title("Server details"); List24 << Background Color(2147483647); List24 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List24 << Enabled(1); List24 << Horizontal Alignment("Default"); List24 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List24 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List24 << Text Color(2147483647); List24 << UI Only(0); List24 << Vertical Alignment("Default"); List24 << Visibility("Visible"); List24 << Set Min Size(347, 482); List24 << Set Max Size(347, 482); List24 << Set Stretch({"Neutral", "Neutral"}); List24 << set horizontal(0); List22 << Background Color(2147483647); List22 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List22 << Enabled(1); List22 << Horizontal Alignment("Default"); List22 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List22 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List22 << Text Color(2147483647); List22 << UI Only(0); List22 << Vertical Alignment("Default"); List22 << Visibility("Visible"); List22 << Set Min Size(327, 311); List22 << Set Max Size(327, 311); List22 << Set Stretch({"Neutral", "Neutral"}); List22 << set horizontal(1); user_servery_type_radiobox << Background Color(2147483647); user_servery_type_radiobox << Border({Left(0), Top(0), Right(0), Bottom(0)}); user_servery_type_radiobox << Enabled(1); user_servery_type_radiobox << Horizontal Alignment("Default"); user_servery_type_radiobox << Margin({Left(2), Top(2), Right(2), Bottom(2)}); user_servery_type_radiobox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); user_servery_type_radiobox << Text Color(2147483647); user_servery_type_radiobox << UI Only(0); user_servery_type_radiobox << Vertical Alignment("Default"); user_servery_type_radiobox << Visibility("Visible"); user_servery_type_radiobox << Set Min Size(42, 31); user_servery_type_radiobox << Set Max Size(42, 31); user_servery_type_radiobox << Set Stretch({"Neutral", "Neutral"}); user_servery_type_radiobox << Set Items({"IP21", "PI"}); user_servery_type_radiobox << Set Min Size(42, 31); user_servery_type_radiobox << Set Max Size(42, 31); user_servery_type_radiobox << Set Stretch({"Neutral", "Neutral"}); List23 << Background Color(2147483647); List23 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List23 << Enabled(1); List23 << Horizontal Alignment("Default"); List23 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List23 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List23 << Text Color(2147483647); List23 << UI Only(0); List23 << Vertical Alignment("Default"); List23 << Visibility("Visible"); List23 << Set Min Size(241, 291); List23 << Set Max Size(241, 291); List23 << Set Stretch({"Neutral", "Neutral"}); List23 << set horizontal(0); Panel12 << Background Color(2147483647); Panel12 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel12 << Enabled(1); Panel12 << Horizontal Alignment("Default"); Panel12 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel12 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel12 << Text Color(2147483647); Panel12 << UI Only(0); Panel12 << Vertical Alignment("Default"); Panel12 << Visibility("Visible"); Panel12 << Set Min Size(221, 77); Panel12 << Set Max Size(221, 77); Panel12 << Set Stretch({"Neutral", "Neutral"}); Panel12 << Set Title("Subdomain (e.g. fr-server-name)"); ServerAddress_userbox << Background Color(2147483647); ServerAddress_userbox << Border({Left(0), Top(0), Right(0), Bottom(0)}); ServerAddress_userbox << Enabled(1); ServerAddress_userbox << Horizontal Alignment("Default"); ServerAddress_userbox << Margin({Left(0), Top(0), Right(0), Bottom(0)}); ServerAddress_userbox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); ServerAddress_userbox << Text Color(2147483647); ServerAddress_userbox << UI Only(0); ServerAddress_userbox << User Resizable({1, 1}); ServerAddress_userbox << Vertical Alignment("Default"); ServerAddress_userbox << Visibility("Visible"); ServerAddress_userbox << Set Min Size(180, 23); ServerAddress_userbox << Set Max Size(180, 23); ServerAddress_userbox << Set Stretch({"Neutral", "Neutral"}); ServerAddress_userbox << Set Base Font("Text"); ServerAddress_userbox << Set Font Scale(1); ServerAddress_userbox << Set Text(""); ServerAddress_userbox << Bullet point(0); ServerAddress_userbox << Justify Text("Left"); ServerAddress_userbox << Rotate Text("Horizontal"); ServerAddress_userbox << Set Width(180); ServerAddress_userbox << Set Wrap(180); ServerAddress_userbox << Set Tip("Server address"); ServerAddress_userbox << Set Lock(0); ServerAddress_userbox << Set PW Style(0); ServerAddress_userbox << Set Hint(""); Panel13 << Background Color(2147483647); Panel13 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel13 << Enabled(1); Panel13 << Horizontal Alignment("Default"); Panel13 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel13 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel13 << Text Color(2147483647); Panel13 << UI Only(0); Panel13 << Vertical Alignment("Default"); Panel13 << Visibility("Visible"); Panel13 << Set Min Size(216, 77); Panel13 << Set Max Size(216, 77); Panel13 << Set Stretch({"Neutral", "Neutral"}); Panel13 << Set Title("Domain (e.g. mycompany.com)"); Extension_userbox << Background Color(2147483647); Extension_userbox << Border({Left(0), Top(0), Right(0), Bottom(0)}); Extension_userbox << Enabled(1); Extension_userbox << Horizontal Alignment("Default"); Extension_userbox << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Extension_userbox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Extension_userbox << Text Color(2147483647); Extension_userbox << UI Only(0); Extension_userbox << User Resizable({1, 1}); Extension_userbox << Vertical Alignment("Default"); Extension_userbox << Visibility("Visible"); Extension_userbox << Set Min Size(180, 23); Extension_userbox << Set Max Size(180, 23); Extension_userbox << Set Stretch({"Neutral", "Neutral"}); Extension_userbox << Set Base Font("Text"); Extension_userbox << Set Font Scale(1); Extension_userbox << Set Text(""); Extension_userbox << Bullet point(0); Extension_userbox << Justify Text("Left"); Extension_userbox << Rotate Text("Horizontal"); Extension_userbox << Set Width(180); Extension_userbox << Set Wrap(180); Extension_userbox << Set Tip("Server address"); Extension_userbox << Set Lock(0); Extension_userbox << Set PW Style(0); Extension_userbox << Set Hint(""); Panel14 << Background Color(2147483647); Panel14 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel14 << Enabled(1); Panel14 << Horizontal Alignment("Default"); Panel14 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel14 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel14 << Text Color(2147483647); Panel14 << UI Only(0); Panel14 << Vertical Alignment("Default"); Panel14 << Visibility("Visible"); Panel14 << Set Min Size(216, 77); Panel14 << Set Max Size(216, 77); Panel14 << Set Stretch({"Neutral", "Neutral"}); Panel14 << Set Title("Site name (description)"); Shortname_userbox << Background Color(2147483647); Shortname_userbox << Border({Left(0), Top(0), Right(0), Bottom(0)}); Shortname_userbox << Enabled(1); Shortname_userbox << Horizontal Alignment("Default"); Shortname_userbox << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Shortname_userbox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Shortname_userbox << Text Color(2147483647); Shortname_userbox << UI Only(0); Shortname_userbox << User Resizable({1, 1}); Shortname_userbox << Vertical Alignment("Default"); Shortname_userbox << Visibility("Visible"); Shortname_userbox << Set Min Size(180, 23); Shortname_userbox << Set Max Size(180, 23); Shortname_userbox << Set Stretch({"Neutral", "Neutral"}); Shortname_userbox << Set Base Font("Text"); Shortname_userbox << Set Font Scale(1); Shortname_userbox << Set Text(""); Shortname_userbox << Bullet point(0); Shortname_userbox << Justify Text("Left"); Shortname_userbox << Rotate Text("Horizontal"); Shortname_userbox << Set Width(180); Shortname_userbox << Set Wrap(180); Shortname_userbox << Set Tip("Shortname"); Shortname_userbox << Set Lock(0); Shortname_userbox << Set PW Style(0); Shortname_userbox << Set Hint(""); Panel15 << Background Color(2147483647); Panel15 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel15 << Enabled(1); Panel15 << Horizontal Alignment("Default"); Panel15 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel15 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel15 << Text Color(2147483647); Panel15 << UI Only(0); Panel15 << Vertical Alignment("Default"); Panel15 << Visibility("Visible"); Panel15 << Set Min Size(327, 131); Panel15 << Set Max Size(327, 131); Panel15 << Set Stretch({"Neutral", "Neutral"}); Panel15 << Set Title("Server list (e.g. sub.company.com/server_list.csv)"); serverlist_userbox << Background Color(2147483647); serverlist_userbox << Border({Left(0), Top(0), Right(0), Bottom(0)}); serverlist_userbox << Enabled(1); serverlist_userbox << Horizontal Alignment("Default"); serverlist_userbox << Margin({Left(0), Top(0), Right(0), Bottom(0)}); serverlist_userbox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); serverlist_userbox << Text Color(2147483647); serverlist_userbox << UI Only(0); serverlist_userbox << User Resizable({1, 1}); serverlist_userbox << Vertical Alignment("Default"); serverlist_userbox << Visibility("Visible"); serverlist_userbox << Set Min Size(291, 33); serverlist_userbox << Set Max Size(291, 33); serverlist_userbox << Set Stretch({"Neutral", "Neutral"}); serverlist_userbox << Set Base Font("Text"); serverlist_userbox << Set Font Name("Segoe UI"); serverlist_userbox << Set Font Style("Plain"); serverlist_userbox << Set Font Size(8); serverlist_userbox << Set Font Scale(1); serverlist_userbox << Set Text("https://raw.githubusercontent.com/industrial-data/JMP-MES-connector/main/MES_servers_list.csv"); serverlist_userbox << Bullet point(0); serverlist_userbox << Justify Text("Left"); serverlist_userbox << Rotate Text("Horizontal"); serverlist_userbox << Set Width(291); serverlist_userbox << Set Wrap(291); serverlist_userbox << Set Tip(""); serverlist_userbox << Set Lock(0); serverlist_userbox << Set PW Style(0); serverlist_userbox << Set Hint(""); serverlist_button << Background Color(2147483647); serverlist_button << Border({Left(0), Top(0), Right(0), Bottom(0)}); serverlist_button << Enabled(1); serverlist_button << Horizontal Alignment("Default"); serverlist_button << Margin({Left(2), Top(2), Right(2), Bottom(2)}); serverlist_button << Padding({Left(0), Top(0), Right(0), Bottom(0)}); serverlist_button << Text Color(2147483647); serverlist_button << UI Only(0); serverlist_button << Vertical Alignment("Default"); serverlist_button << Visibility("Visible"); serverlist_button << Set Min Size(60, 20); serverlist_button << Set Max Size(60, 20); serverlist_button << Set Stretch({"Neutral", "Neutral"}); serverlist_button << Set Button Name("Load"); serverlist_button << Style("Normal"); serverlist_button << Set(0); serverlist_button << Set Icon(""); serverlist_button << Set Icon Location("Right"); serverlist_button << Set Function(load_serverlist_userbox_changes); Panel4 << Background Color(2147483647); Panel4 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel4 << Enabled(1); Panel4 << Horizontal Alignment("Left"); Panel4 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel4 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel4 << Text Color(2147483647); Panel4 << UI Only(0); Panel4 << Vertical Alignment("Top"); Panel4 << Visibility("Visible"); Panel4 << Set Min Size(322, 274); Panel4 << Set Max Size(322, 274); Panel4 << Set Stretch({"Neutral", "Neutral"}); Panel4 << Set Title("Tag search/filter"); Lineup2 << NCol(1); Lineup2 << Background Color(2147483647); Lineup2 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Lineup2 << Enabled(1); Lineup2 << Horizontal Alignment("Default"); Lineup2 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Lineup2 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Lineup2 << Text Color(2147483647); Lineup2 << UI Only(0); Lineup2 << Vertical Alignment("Default"); Lineup2 << Visibility("Visible"); Lineup2 << Set Min Size(286, 220); Lineup2 << Set Max Size(286, 220); Lineup2 << Set Stretch({"Neutral", "Neutral"}); Lineup2 << Spacing(2); List21 << Background Color(2147483647); List21 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List21 << Enabled(1); List21 << Horizontal Alignment("Center"); List21 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List21 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List21 << Text Color(2147483647); List21 << UI Only(0); List21 << Vertical Alignment("Center"); List21 << Visibility("Visible"); List21 << Set Min Size(262, 97); List21 << Set Max Size(262, 97); List21 << Set Stretch({"Neutral", "Neutral"}); List21 << set horizontal(1); Panel10 << Background Color(2147483647); Panel10 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel10 << Enabled(1); Panel10 << Horizontal Alignment("Center"); Panel10 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel10 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel10 << Text Color(2147483647); Panel10 << UI Only(0); Panel10 << Vertical Alignment("Default"); Panel10 << Visibility("Visible"); Panel10 << Set Min Size(160, 77); Panel10 << Set Max Size(160, 77); Panel10 << Set Stretch({"Neutral", "Neutral"}); Panel10 << Set Title("Tagname"); Tagf << Background Color(2147483647); Tagf << Border({Left(0), Top(0), Right(0), Bottom(0)}); Tagf << Enabled(1); Tagf << Horizontal Alignment("Default"); Tagf << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Tagf << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Tagf << Text Color(101); Tagf << UI Only(0); Tagf << User Resizable({1, 1}); Tagf << Vertical Alignment("Center"); Tagf << Visibility("Visible"); Tagf << Set Min Size(124, 23); Tagf << Set Max Size(124, 23); Tagf << Set Stretch({"Off", "Off"}); Tagf << Set Base Font("Text"); Tagf << Set Font Scale(1); Tagf << Set Text("TAG"); Tagf << Bullet point(0); Tagf << Justify Text("Left"); Tagf << Rotate Text("Horizontal"); Tagf << Set Width(124); Tagf << Set Wrap(124); Tagf << Set Tip("Search for tags based on their tagname (e.g. PV)"); Tagf << Set Lock(0); Tagf << Set PW Style(0); Tagf << Set Hint(""); FindTagButton << Background Color(2147483647); FindTagButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); FindTagButton << Enabled(1); FindTagButton << Horizontal Alignment("Right"); FindTagButton << Margin({Left(1), Top(10), Right(1), Bottom(1)}); FindTagButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); FindTagButton << Text Color(2147483647); FindTagButton << UI Only(0); FindTagButton << Vertical Alignment("Center"); FindTagButton << Visibility("Visible"); FindTagButton << Set Min Size(60, 15); FindTagButton << Set Max Size(60, 30); FindTagButton << Set Stretch({"Off", "Off"}); FindTagButton << Set Button Name("Find tags"); FindTagButton << Style("Normal"); FindTagButton << Set(0); FindTagButton << Set Icon(""); FindTagButton << Set Icon Location("Right"); FindTagButton << Set Function(FindTagButtonPress); Panel11 << Background Color(2147483647); Panel11 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel11 << Enabled(1); Panel11 << Horizontal Alignment("Default"); Panel11 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel11 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel11 << Text Color(2147483647); Panel11 << UI Only(0); Panel11 << Vertical Alignment("Default"); Panel11 << Visibility("Visible"); Panel11 << Set Min Size(262, 77); Panel11 << Set Max Size(262, 77); Panel11 << Set Stretch({"Neutral", "Neutral"}); Panel11 << Set Title("Description"); Tagf_description << Background Color(2147483647); Tagf_description << Border({Left(0), Top(0), Right(0), Bottom(0)}); Tagf_description << Enabled(1); Tagf_description << Horizontal Alignment("Default"); Tagf_description << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Tagf_description << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Tagf_description << Text Color(101); Tagf_description << UI Only(0); Tagf_description << User Resizable({1, 1}); Tagf_description << Vertical Alignment("Center"); Tagf_description << Visibility("Visible"); Tagf_description << Set Min Size(200, 23); Tagf_description << Set Max Size(200, 23); Tagf_description << Set Stretch({"Off", "Off"}); Tagf_description << Set Base Font("Text"); Tagf_description << Set Font Scale(1); Tagf_description << Set Text(""); Tagf_description << Bullet point(0); Tagf_description << Justify Text("Left"); Tagf_description << Rotate Text("Horizontal"); Tagf_description << Set Width(200); Tagf_description << Set Wrap(200); Tagf_description << Set Tip("Add a description filter your search (e.g. valve)"); Tagf_description << Set Lock(0); Tagf_description << Set PW Style(0); Tagf_description << Set Hint(""); List10 << Background Color(2147483647); List10 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List10 << Enabled(1); List10 << Horizontal Alignment("Default"); List10 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List10 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List10 << Text Color(2147483647); List10 << UI Only(0); List10 << Vertical Alignment("Top"); List10 << Visibility("Visible"); List10 << Set Min Size(352, 234); List10 << Set Max Size(352, 234); List10 << Set Stretch({"Neutral", "Neutral"}); List10 << set horizontal(0); Panel1 << Background Color(2147483647); Panel1 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel1 << Enabled(1); Panel1 << Horizontal Alignment("Default"); Panel1 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel1 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel1 << Text Color(2147483647); Panel1 << UI Only(0); Panel1 << Vertical Alignment("Default"); Panel1 << Visibility("Visible"); Panel1 << Set Min Size(332, 97); Panel1 << Set Max Size(332, 97); Panel1 << Set Stretch({"Neutral", "Neutral"}); Panel1 << Set Title("Start Time"); List13 << Background Color(2147483647); List13 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List13 << Enabled(1); List13 << Horizontal Alignment("Default"); List13 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List13 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List13 << Text Color(2147483647); List13 << UI Only(0); List13 << Vertical Alignment("Default"); List13 << Visibility("Visible"); List13 << Set Min Size(296, 43); List13 << Set Max Size(296, 43); List13 << Set Stretch({"Neutral", "Neutral"}); List13 << set horizontal(1); start_time << Background Color(2147483647); start_time << Border({Left(0), Top(0), Right(0), Bottom(0)}); start_time << Enabled(1); start_time << Horizontal Alignment("Default"); start_time << Margin({Left(0), Top(0), Right(0), Bottom(0)}); start_time << Padding({Left(0), Top(0), Right(0), Bottom(0)}); start_time << Text Color(2147483647); start_time << UI Only(0); start_time << Vertical Alignment("Default"); start_time << Visibility("Visible"); start_time << Set Min Size(192, 23); start_time << Set Max Size(192, 23); start_time << Set Stretch({"Off", "Off"}); start_time << Set(3664950000); start_time << Set Lock(0); start_time << Set Minimum(.); start_time << Set Exclude Minimum(0); start_time << Set Maximum(.); start_time << Set Exclude Maximum(0); start_time << Set Increment(.); start_time << Set Integer Only(0); start_time << Set Show Spin Box(0); start_time << Set Format(format("Locale Date Time h:m:s", 23, 0)); start_time << Set Tip(""); start_time << Set Base Font("Text"); start_time << Set Font Scale(1); RoundButton << Background Color(2147483647); RoundButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); RoundButton << Enabled(1); RoundButton << Horizontal Alignment("Default"); RoundButton << Margin({Left(2), Top(2), Right(2), Bottom(2)}); RoundButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); RoundButton << Text Color(2147483647); RoundButton << UI Only(0); RoundButton << Vertical Alignment("Bottom"); RoundButton << Visibility("Visible"); RoundButton << Set Min Size(60, 16); RoundButton << Set Max Size(60, 16); RoundButton << Set Stretch({"Off", "Off"}); RoundButton << Set Button Name("Round"); RoundButton << Style("Underline"); RoundButton << Set(0); RoundButton << Set Icon(""); RoundButton << Set Icon Location("Right"); RoundButton << Set Function(RoundButtonPress); Panel2 << Background Color(2147483647); Panel2 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel2 << Enabled(1); Panel2 << Horizontal Alignment("Default"); Panel2 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel2 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel2 << Text Color(2147483647); Panel2 << UI Only(0); Panel2 << Vertical Alignment("Default"); Panel2 << Visibility("Visible"); Panel2 << Set Min Size(332, 97); Panel2 << Set Max Size(332, 97); Panel2 << Set Stretch({"Neutral", "Neutral"}); Panel2 << Set Title("End Time"); List12 << Background Color(2147483647); List12 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List12 << Enabled(1); List12 << Horizontal Alignment("Default"); List12 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List12 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List12 << Text Color(2147483647); List12 << UI Only(0); List12 << Vertical Alignment("Default"); List12 << Visibility("Visible"); List12 << Set Min Size(296, 43); List12 << Set Max Size(296, 43); List12 << Set Stretch({"Neutral", "Neutral"}); List12 << set horizontal(1); end_time << Background Color(2147483647); end_time << Border({Left(0), Top(0), Right(0), Bottom(0)}); end_time << Enabled(1); end_time << Horizontal Alignment("Default"); end_time << Margin({Left(0), Top(0), Right(0), Bottom(0)}); end_time << Padding({Left(0), Top(0), Right(0), Bottom(0)}); end_time << Text Color(2147483647); end_time << UI Only(0); end_time << Vertical Alignment("Default"); end_time << Visibility("Visible"); end_time << Set Min Size(84, 23); end_time << Set Max Size(225, 23); end_time << Set Stretch({"Off", "Off"}); end_time << Set(3665036400); end_time << Set Lock(0); end_time << Set Minimum(.); end_time << Set Exclude Minimum(0); end_time << Set Maximum(.); end_time << Set Exclude Maximum(0); end_time << Set Increment(.); end_time << Set Integer Only(0); end_time << Set Show Spin Box(0); end_time << Set Format(format("Locale Date Time h:m:s", 23, 0)); end_time << Set Tip(""); end_time << Set Base Font("Text"); end_time << Set Font Scale(1); NowButton << Background Color(2147483647); NowButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); NowButton << Enabled(1); NowButton << Horizontal Alignment("Default"); NowButton << Margin({Left(2), Top(2), Right(2), Bottom(2)}); NowButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); NowButton << Text Color(2147483647); NowButton << UI Only(0); NowButton << Vertical Alignment("Bottom"); NowButton << Visibility("Visible"); NowButton << Set Min Size(60, 16); NowButton << Set Max Size(60, 16); NowButton << Set Stretch({"Off", "Off"}); NowButton << Set Button Name("Now"); NowButton << Style("Underline"); NowButton << Set(0); NowButton << Set Icon(""); NowButton << Set Icon Location("Right"); NowButton << Set Function(NowButtonPress); List18 << Background Color(2147483647); List18 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List18 << Enabled(1); List18 << Horizontal Alignment("Default"); List18 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List18 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List18 << Text Color(2147483647); List18 << UI Only(0); List18 << Vertical Alignment("Default"); List18 << Visibility("Visible"); List18 << Set Min Size(419, 304); List18 << Set Max Size(419, 304); List18 << Set Stretch({"Neutral", "Neutral"}); List18 << set horizontal(1); List4 << Background Color(2147483647); List4 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List4 << Enabled(1); List4 << Horizontal Alignment("Left"); List4 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List4 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List4 << Text Color(2147483647); List4 << UI Only(0); List4 << Vertical Alignment("Top"); List4 << Visibility("Visible"); List4 << Set Min Size(360, 284); List4 << Set Max Size(360, 284); List4 << Set Stretch({"Neutral", "Neutral"}); List4 << set horizontal(0); Text1 << Background Color(2147483647); Text1 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Text1 << Enabled(1); Text1 << Horizontal Alignment("Left"); Text1 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Text1 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Text1 << Text Color(101); Text1 << UI Only(0); Text1 << Vertical Alignment("Default"); Text1 << Visibility("Visible"); Text1 << Set Min Size(118, 19); Text1 << Set Max Size(118, 19); Text1 << Set Stretch({"Off", "Off"}); Text1 << Set Base Font("Text"); Text1 << Set Font Scale(1); Text1 << Set Text("Available tags >>> "); Text1 << Bullet point(0); Text1 << Justify Text("Left"); Text1 << Rotate Text("Horizontal"); Text1 << Set Width(-1); Text1 << Set Wrap(360); Text1 << Set Tip(""); List1 << Background Color(2147483647); List1 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List1 << Enabled(1); List1 << Horizontal Alignment("Default"); List1 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List1 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List1 << Text Color(2147483647); List1 << UI Only(0); List1 << User Resizable({1, 1}); List1 << Vertical Alignment("Bottom"); List1 << Visibility("Visible"); List1 << Set Items({}); List1 << Set Max Selected(-1); List1 << Set Size(340, 225); List1 << Set N Lines(13); List1 << Set Base Font("Text"); List1 << Set Font Scale(1); List1 << Set Min Size(200, 225); List1 << Set Max Size(1000, 225); List1 << Set Stretch({"Off", "Off"}); List17 << Background Color(2147483647); List17 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List17 << Enabled(1); List17 << Horizontal Alignment("Center"); List17 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List17 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List17 << Text Color(2147483647); List17 << UI Only(0); List17 << Vertical Alignment("Default"); List17 << Visibility("Visible"); List17 << Set Min Size(85, 88); List17 << Set Max Size(85, 88); List17 << Set Stretch({"Neutral", "Neutral"}); List17 << set horizontal(0); Move_tags_button_box << Background Color(2147483647); Move_tags_button_box << Border({Left(0), Top(0), Right(0), Bottom(0)}); Move_tags_button_box << Enabled(1); Move_tags_button_box << Horizontal Alignment("Center"); Move_tags_button_box << Margin({Left(2), Top(2), Right(2), Bottom(2)}); Move_tags_button_box << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Move_tags_button_box << Text Color(2147483647); Move_tags_button_box << UI Only(0); Move_tags_button_box << Vertical Alignment("Default"); Move_tags_button_box << Visibility("Visible"); Move_tags_button_box << Set Min Size(60, 20); Move_tags_button_box << Set Max Size(60, 20); Move_tags_button_box << Set Stretch({"Off", "Off"}); Move_tags_button_box << Set Button Name("Add ➔"); Move_tags_button_box << Style("Normal"); Move_tags_button_box << Set(0); Move_tags_button_box << Set Icon(""); Move_tags_button_box << Set Icon Location("Right"); Move_tags_button_box << Set Function(JSL Quote(selected_tags_index = List1 << Get Selected Indices;
+
+show(selected_tags_index);
+taglist = ::taglist;
+show(taglist);
+tagnames = Eval(taglist[selected_tags_index]);
+
+show(tagnames);
+show(N items(selected_tags_index));
+
+If( N items(selected_tags_index) > 0,
+//List1 << removeSelected;
+List2 << append( tagnames );
+,
+Print( "Please select or paste tagnames" )
+);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+)); Remove_tags_button_box << Background Color(2147483647); Remove_tags_button_box << Border({Left(0), Top(0), Right(0), Bottom(0)}); Remove_tags_button_box << Enabled(1); Remove_tags_button_box << Horizontal Alignment("Center"); Remove_tags_button_box << Margin({Left(2), Top(2), Right(2), Bottom(2)}); Remove_tags_button_box << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Remove_tags_button_box << Text Color(2147483647); Remove_tags_button_box << UI Only(0); Remove_tags_button_box << Vertical Alignment("Default"); Remove_tags_button_box << Visibility("Visible"); Remove_tags_button_box << Set Min Size(61, 20); Remove_tags_button_box << Set Max Size(61, 20); Remove_tags_button_box << Set Stretch({"Off", "Off"}); Remove_tags_button_box << Set Button Name("Remove ←"); Remove_tags_button_box << Style("Normal"); Remove_tags_button_box << Set(0); Remove_tags_button_box << Set Icon(""); Remove_tags_button_box << Set Icon Location("Right"); Remove_tags_button_box << Set Function(List2 << Remove Selected); List3 << Background Color(2147483647); List3 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List3 << Enabled(1); List3 << Horizontal Alignment("Default"); List3 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List3 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List3 << Text Color(2147483647); List3 << UI Only(0); List3 << Vertical Alignment("Top"); List3 << Visibility("Visible"); List3 << Set Min Size(322, 339); List3 << Set Max Size(322, 339); List3 << Set Stretch({"Neutral", "Neutral"}); List3 << set horizontal(0); List20 << Background Color(2147483647); List20 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List20 << Enabled(1); List20 << Horizontal Alignment("Default"); List20 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List20 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List20 << Text Color(2147483647); List20 << UI Only(0); List20 << Vertical Alignment("Default"); List20 << Visibility("Visible"); List20 << Set Min Size(266, 44); List20 << Set Max Size(266, 44); List20 << Set Stretch({"Neutral", "Neutral"}); List20 << set horizontal(1); Text2 << Background Color(2147483647); Text2 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Text2 << Enabled(1); Text2 << Horizontal Alignment("Default"); Text2 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Text2 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Text2 << Text Color(101); Text2 << UI Only(0); Text2 << Vertical Alignment("Default"); Text2 << Visibility("Visible"); Text2 << Set Min Size(74, 19); Text2 << Set Max Size(74, 19); Text2 << Set Stretch({"Off", "Off"}); Text2 << Set Base Font("Text"); Text2 << Set Font Scale(1); Text2 << Set Text(">>> Tag list"); Text2 << Bullet point(0); Text2 << Justify Text("Left"); Text2 << Rotate Text("Horizontal"); Text2 << Set Width(-1); Text2 << Set Wrap(360); Text2 << Set Tip(""); PasteButton << Background Color(2147483647); PasteButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); PasteButton << Enabled(1); PasteButton << Horizontal Alignment("Default"); PasteButton << Margin({Left(2), Top(2), Right(2), Bottom(2)}); PasteButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); PasteButton << Text Color(2147483647); PasteButton << UI Only(0); PasteButton << Vertical Alignment("Default"); PasteButton << Visibility("Visible"); PasteButton << Set Min Size(148, 19); PasteButton << Set Max Size(148, 30); PasteButton << Set Stretch({"Off", "Off"}); PasteButton << Set Button Name("Paste tags "); PasteButton << Style("Normal"); PasteButton << Set(0); PasteButton << Set Icon(""); PasteButton << Set Icon Location("Right"); PasteButton << Set Function(PasteButtonPress); List2 << Background Color(2147483647); List2 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List2 << Enabled(1); List2 << Horizontal Alignment("Left"); List2 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List2 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List2 << Text Color(2147483647); List2 << UI Only(0); List2 << User Resizable({1, 1}); List2 << Vertical Alignment("Bottom"); List2 << Visibility("Visible"); List2 << Set Items({}); List2 << Set Max Selected(-1); List2 << Set Size(235, 191); List2 << Set N Lines(11); List2 << Set Base Font("Text"); List2 << Set Font Scale(1); List2 << Set Min Size(235, 191); List2 << Set Max Size(235, 191); List2 << Set Stretch({"Off", "Off"}); List8 << Background Color(2147483647); List8 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List8 << Enabled(1); List8 << Horizontal Alignment("Default"); List8 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List8 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List8 << Text Color(2147483647); List8 << UI Only(0); List8 << Vertical Alignment("Default"); List8 << Visibility("Visible"); List8 << Set Min Size(160, 44); List8 << Set Max Size(160, 44); List8 << Set Stretch({"Neutral", "Neutral"}); List8 << set horizontal(0); RemoveTagsButton << Background Color(2147483647); RemoveTagsButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); RemoveTagsButton << Enabled(1); RemoveTagsButton << Horizontal Alignment("Default"); RemoveTagsButton << Margin({Left(2), Top(2), Right(2), Bottom(2)}); RemoveTagsButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); RemoveTagsButton << Text Color(2147483647); RemoveTagsButton << UI Only(0); RemoveTagsButton << Vertical Alignment("Default"); RemoveTagsButton << Visibility("Visible"); RemoveTagsButton << Set Min Size(136, 20); RemoveTagsButton << Set Max Size(136, 20); RemoveTagsButton << Set Stretch({"Off", "Off"}); RemoveTagsButton << Set Button Name("Remove all tags"); RemoveTagsButton << Style("Normal"); RemoveTagsButton << Set(0); RemoveTagsButton << Set Icon(""); RemoveTagsButton << Set Icon Location("Right"); RemoveTagsButton << Set Function(RemoveTagsButtonPress); List15 << Background Color(2147483647); List15 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List15 << Enabled(1); List15 << Horizontal Alignment("Default"); List15 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List15 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List15 << Text Color(2147483647); List15 << UI Only(0); List15 << Vertical Alignment("Default"); List15 << Visibility("Visible"); List15 << Set Min Size(352, 484); List15 << Set Max Size(352, 484); List15 << Set Stretch({"Neutral", "Neutral"}); List15 << set horizontal(0); Outline1 << Background Color(2147483647); Outline1 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Outline1 << Enabled(1); Outline1 << Horizontal Alignment("Center"); Outline1 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Outline1 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Outline1 << Text Color(2147483647); Outline1 << UI Only(0); Outline1 << Vertical Alignment("Center"); Outline1 << Visibility("Visible"); Outline1 << Set Min Size(184, 464); Outline1 << Set Max Size(184, 464); Outline1 << Set Stretch({"Neutral", "Neutral"}); Outline1 << Set Title(""); Outline1 << SetHorizontal(0); Outline1 << SetOpen(1); Outline1 << Outline Close Orientation("Auto"); Outline1 << Set Allow Title Wrapping(1); Outline1 << Set Base Font("Title"); Outline1 << Set Font Scale(1); PanelBox << Background Color(2147483647); PanelBox << Border({Left(0), Top(0), Right(0), Bottom(0)}); PanelBox << Enabled(1); PanelBox << Horizontal Alignment("Center"); PanelBox << Margin({Left(0), Top(0), Right(0), Bottom(0)}); PanelBox << Padding({Left(0), Top(0), Right(0), Bottom(0)}); PanelBox << Text Color(2147483647); PanelBox << UI Only(0); PanelBox << Vertical Alignment("Center"); PanelBox << Visibility("Visible"); PanelBox << Set Min Size(125, 104); PanelBox << Set Max Size(125, 104); PanelBox << Set Stretch({"Neutral", "Neutral"}); PanelBox << Set Title("Method"); MethodOption << Background Color(2147483647); MethodOption << Border({Left(0), Top(0), Right(0), Bottom(0)}); MethodOption << Enabled(1); MethodOption << Horizontal Alignment("Default"); MethodOption << Margin({Left(2), Top(2), Right(2), Bottom(2)}); MethodOption << Padding({Left(0), Top(0), Right(0), Bottom(0)}); MethodOption << Text Color(2147483647); MethodOption << UI Only(0); MethodOption << Vertical Alignment("Default"); MethodOption << Visibility("Visible"); MethodOption << Set Min Size(85, 46); MethodOption << Set Max Size(85, 46); MethodOption << Set Stretch({"Off", "Off"}); MethodOption << Set Items({"Interpolated", "Average", "Actual"}); MethodOption << Set Min Size(85, 46); MethodOption << Set Max Size(85, 46); MethodOption << Set Stretch({"Off", "Off"}); Panel7 << Background Color(2147483647); Panel7 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel7 << Enabled(1); Panel7 << Horizontal Alignment("Center"); Panel7 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel7 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel7 << Text Color(2147483647); Panel7 << UI Only(0); Panel7 << Vertical Alignment("Center"); Panel7 << Visibility("Visible"); Panel7 << Set Min Size(118, 162); Panel7 << Set Max Size(118, 162); Panel7 << Set Stretch({"Neutral", "Neutral"}); Panel7 << Set Title("Period "); Period_box << Background Color(2147483647); Period_box << Border({Left(0), Top(0), Right(0), Bottom(0)}); Period_box << Enabled(1); Period_box << Horizontal Alignment("Default"); Period_box << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Period_box << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Period_box << Text Color(101); Period_box << UI Only(0); Period_box << User Resizable({1, 1}); Period_box << Vertical Alignment("Default"); Period_box << Visibility("Visible"); Period_box << Set Min Size(82, 23); Period_box << Set Max Size(82, 23); Period_box << Set Stretch({"Off", "Off"}); Period_box << Set Base Font("Text"); Period_box << Set Font Scale(1); Period_box << Set Text("10"); Period_box << Bullet point(0); Period_box << Justify Text("Left"); Period_box << Rotate Text("Horizontal"); Period_box << Set Width(82); Period_box << Set Wrap(82); Period_box << Set Tip("Search for tags based on a filter"); Period_box << Set Lock(0); Period_box << Set PW Style(0); Period_box << Set Hint(""); Period_box_units << Background Color(2147483647); Period_box_units << Border({Left(0), Top(0), Right(0), Bottom(0)}); Period_box_units << Enabled(1); Period_box_units << Horizontal Alignment("Default"); Period_box_units << Margin({Left(2), Top(2), Right(2), Bottom(2)}); Period_box_units << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Period_box_units << Text Color(2147483647); Period_box_units << UI Only(0); Period_box_units << Vertical Alignment("Default"); Period_box_units << Visibility("Visible"); Period_box_units << Set Min Size(62, 61); Period_box_units << Set Max Size(62, 61); Period_box_units << Set Stretch({"Off", "Off"}); Period_box_units << Set Items({"seconds", "minutes", "hours", "days"}); Period_box_units << Set Min Size(62, 61); Period_box_units << Set Max Size(62, 61); Period_box_units << Set Stretch({"Off", "Off"}); Panel9 << Background Color(2147483647); Panel9 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Panel9 << Enabled(1); Panel9 << Horizontal Alignment("Center"); Panel9 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Panel9 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Panel9 << Text Color(2); Panel9 << UI Only(0); Panel9 << Vertical Alignment("Center"); Panel9 << Visibility("Visible"); Panel9 << Set Min Size(164, 78); Panel9 << Set Max Size(164, 78); Panel9 << Set Stretch({"Neutral", "Neutral"}); Panel9 << Set Title(""); okButton << Background Color(2); okButton << Border({Left(0), Top(0), Right(0), Bottom(0)}); okButton << Enabled(1); okButton << Horizontal Alignment("Default"); okButton << Margin({Left(2), Top(2), Right(2), Bottom(2)}); okButton << Padding({Left(0), Top(0), Right(0), Bottom(0)}); okButton << Text Color(2); okButton << UI Only(0); okButton << Vertical Alignment("Center"); okButton << Visibility("Visible"); okButton << Set Min Size(124, 15); okButton << Set Max Size(124, 50); okButton << Set Stretch({"Off", "Off"}); okButton << Set Button Name("Run data extraction"); okButton << Style("Normal"); okButton << Set(0); okButton << Set Icon(""); okButton << Set Icon Location("Right"); okButton << Set Function(okButtonPress); List16 << Background Color(2147483647); List16 << Border({Left(0), Top(0), Right(0), Bottom(0)}); List16 << Enabled(1); List16 << Horizontal Alignment("Center"); List16 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); List16 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); List16 << Text Color(2147483647); List16 << UI Only(0); List16 << Vertical Alignment("Center"); List16 << Visibility("Visible"); List16 << Set Min Size(141, 39); List16 << Set Max Size(141, 39); List16 << Set Stretch({"Neutral", "Neutral"}); List16 << set horizontal(1); Text3 << Background Color(2147483647); Text3 << Border({Left(0), Top(0), Right(0), Bottom(0)}); Text3 << Enabled(1); Text3 << Horizontal Alignment("Center"); Text3 << Margin({Left(0), Top(0), Right(0), Bottom(0)}); Text3 << Padding({Left(0), Top(0), Right(0), Bottom(0)}); Text3 << Text Color(2147483647); Text3 << UI Only(0); Text3 << Vertical Alignment("Center"); Text3 << Visibility("Visible"); Text3 << Set Min Size(121, 19); Text3 << Set Max Size(121, 19); Text3 << Set Stretch({"Neutral", "Neutral"}); Text3 << Set Base Font("Text"); Text3 << Set Font Scale(1); Text3 << Set Text("JMP-MES-connector"); Text3 << Bullet point(0); Text3 << Justify Text("Left"); Text3 << Rotate Text("Horizontal"); Text3 << Set Width(-1); Text3 << Set Wrap(360); Text3 << Set Tip("")))), Initialize(Module1 << Auto Launch(1); Module1 << Set Module Type("Report"); Module1 << Set Window Title("^TABLENAME - ^APPNAME")))
