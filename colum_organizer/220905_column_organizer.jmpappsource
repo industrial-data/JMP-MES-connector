@@ -1,0 +1,1292 @@
+﻿JMP App(
+	Set Name( "Column organizer" ),
+	Set Description( "Select and group your columns " ),
+	Auto Launch( 1 ),
+	Snap To Grid( 1 ),
+	Show Grid( 1 ),
+	Show Properties( 1 ),
+	Show Sources( 1 ),
+	Group By Category( 1 ),
+	Dashboard Mode( 0 ),
+	Parameters,
+	Tables(
+		DataTable1 = GuiTable(
+			Set Path( "$SAMPLE_DATA/Bands Data.JMP" ),
+			Set Label( "" ),
+			Location( "Current Data Table" ),
+			Invisible( 0 )
+		)
+	),
+	Script(JSL Quote(// This script is executed when the application is run.
+// Named objects have been created for the application modules
+// (for example, "Module1") and the pre-defined object
+// "thisApplication" refers to the application object itself.
+// Variables and functions declared here are scoped to the
+// Application namespace.
+
+)	),
+	Allocate(
+		Module1 = Plan(
+			PreAllocate,
+			Script(JSL Quote(// This script is executed when a new module instance is
+// created.  The pre-defined object "thisModuleInstance" refers
+// to the instance object, but other objects such as boxes and
+// scripts have not yet been created.  Variables declared here are
+// scoped to the ModuleInstance namespace.
+
+// License
+// BSC-Clause 3
+// https://github.com/industrial-data/JMP-MES-connector
+// Developers
+	// Francisco Navarro @franktoffel
+
+// Add-in needs a table open to load
+if(isempty(CurrentDataTable()),
+	dt = Open( "$SAMPLE_DATA/Bands Data.JMP");
+	,
+	dt = CurrentDataTable();
+);
+
+// This special function will receive parameters passed to CreateInstance()
+OnModuleLoad({},
+);
+
+thisModuleInstance << CreateObjects;
+
+// After this point your module instance objects have been created
+// and can be referred to by name (for example, "Button1").
+
+
+
+YButtonPress = Function({this},
+colListGroup << Append( colListData << GetSelected );
+);
+
+
+OKbuttonPress=Function({this},
+	
+	// asigns  current data table to dt
+	dt = CurrentDataTable();
+	
+	// gets current user selection
+	columnNameList = colListGroup << GetItems;//List of columns in this form: {"column_1","column_2",...,"column_3"}
+	
+	// gets naming specified by user
+	myGroupName = GroupName << GetText;
+	
+	myGroup = dt << GroupColumns( myGroupName, columnNameList );
+	
+	print(myGroupName || " created");
+	
+	
+	// saves options for recall (if needed)
+	recallRoles; 
+	
+	colListData << reset;
+	colListData << NameContains (" ");
+	
+	//colListData << delete;
+	//list2 << prepend(colListData = Filter Col Selector());
+);
+
+
+ResetButtonPress=Function({this},
+	clearRoles; // see function at the end
+);
+
+
+RemoveButtonPress=Function({this},
+	// This function is called when the button is pressed
+	colListGroup << RemoveSelected;
+);
+
+
+CancelButtonPress=Function({this},
+Current Window() << CloseWindow 
+);
+
+
+PasteButtonPress=Function({this},
+	copiedColumns = GetClipboard();
+	copiedColumnList = Words(copiedColumns,"\!t\!r\!n");
+	colListGroup<<Append(copiedColumnList);
+);
+
+
+RecallButtonPress=Function({this},
+	clearRoles;
+	/* Restore any previous settings from the global variables */
+	Try(
+		colListGroup << Append( ::colListGroupRecall );
+		GroupName << SetText( ::GroupNameRecall );
+	);
+);
+
+// General functions
+
+// To call from other buttons or help the add-in
+
+// Expression to store the current settings in global variable
+recallRoles = Expr(
+	::colListGroupRecall = colListGroup << GetItems;
+	::GroupNameRecall = GroupName << GetText();
+);
+
+// Clear all current settings
+clearRoles = Expr(
+	colListGroup << RemoveAll;
+	GroupName << SetText("Group name");
+);
+
+UngroupButtonPress=Function({this},
+	// This function is called when the button is pressed
+	// gets current user selection
+	//List of columns in this form: {"column_1","column_2",...,"column_3"}
+	selectedElements = colListData << GetSelected;
+
+	dt << UngroupColumns(selectedElements);
+	colListData << Reset;
+	colListData << NameContains (" ");
+);
+
+
+ToFirstButtonPress=Function({this},
+	// This function is called when the button is pressed
+	selectedElements = colListData << GetSelected;
+	
+	// Works in JMP 15
+	//dt << move selected columns( selectedElements, To First);
+
+	
+	// bug in JMP 14:
+	// https://community.jmp.com/t5/Discussions/Move-Selected-Columns-with-list-parameter/td-p/108064 
+	Eval( Eval Expr(dt << Move Selected Columns( Expr(selectedElements), To First)) ); 
+	colListData << Reset; //refresh selector
+	colListData << NameContains (" ");
+);
+
+
+ToLastButtonPress=Function({this},
+	// This function is called when the button is pressed
+	selectedElements = colListData << GetSelected;
+	
+	// Works in JMP 15
+	//dt << move selected columns( selectedElements, To Last);
+
+	
+	// bug in JMP 14:
+	// https://community.jmp.com/t5/Discussions/Move-Selected-Columns-with-list-parameter/td-p/108064 
+	Eval( Eval Expr(dt << Move Selected Columns( Expr(selectedElements), To Last)) ); 
+	colListData << Reset; //refresh selector
+	colListData << NameContains (" ");
+);
+
+MoveButtonPress=Function({this},
+	selectedElements = colListData << GetSelectedColumns;
+	dt << MoveSelectedColumns(selectedElements, after(:name)); 
+	Wait(0);
+	colListData << Reset; //refresh selector
+	colListData << NameContains (" ");
+);
+
+/*
+AfterButtonPress=Function({this},
+	selectedElements = colListData << GetSelected;
+	selectedIndices = colListData << GetSelectedIndices;
+	nElements = NItems( selectedElements );
+	dt << move selected columns( after(selectedIndices[1]));
+	Wait(0);
+	colListData << Reset; //refresh selector
+	colListData << NameContains (" ");
+);
+*/
+RenameButtonPress= Function( {this},
+	print("Renaming columns");
+
+	dt = CurrentDataTable();
+	
+	selectedElements = colListGroup << Get Items;
+	
+	show(N ItemS(selectedElements));
+	
+	Type_NameRadioBox = NameRadioBox  << Get Selected;
+	
+	show(Type_NameRadioBox);
+	
+	print("Iterating through column names:");
+		For(i = 1, i <= N Items(selectedElements), i++,
+			col_name = selectedElements[i];
+			show(col_name);
+			
+			new_name = selectedElements[i]; // in case something fails
+
+			print("Saving original column name as metadata");
+			
+			orig_col_name = Column(dt, col_name) << Get Property("original_colname");
+			
+			if(is Empty(orig_col_name),
+			// Original property not exisitng
+			Column(dt, col_name) << Set Property("original_colname", col_name);,
+			//Restablishing original name
+				new_name = orig_col_name;
+				show(new_name);
+			);
+						
+			
+			if( Type_NameRadioBox == "Tagname",
+				Try(new_name = Column(dt, col_name) << Get Property("tagname");
+					show(new_name);
+				);
+			);
+			
+			if( Type_NameRadioBox == "Tag (description) [units]",
+				Try(new_name = Column(dt, col_name) << Get Property("addin_colname");
+					show(new_name););
+			);
+			
+			if( Type_NameRadioBox == "Formula",	
+				print("Trying to get formula from column");
+				new_name = Char(Column(dt, col_name) << Get Formula);
+				if(new_name != Char(Empty()),
+					substitute into(new_name, expr(":"), expr(""));
+					substitute into(new_name, expr("\!"n)"), expr("\!")"));
+					show(new_name);,
+					
+					print("No formula was found");
+					new_name = col_name;
+					);
+				);
+						
+			if( Type_NameRadioBox == "original_colname",	
+				Try( new_name = Column(dt, col_name) << Get Property("original_colname");
+				show(new_name););
+			);
+			
+			print("Renaming column");
+			Column( dt, col_name ) << Set Name(new_name);
+
+		);
+	);
+
+
+MoveButtonPress1 = Function( {this},
+	selectedElements = colListData << GetSelectedColumns;
+	dt << MoveSelectedColumns( selectedElements, after( :name ) );
+	Wait( 0 );
+	colListData << Reset;
+	colListData << NameContains( " " );
+);
+
+
+RecallButtonPress1 = Function( {this},
+	clearRoles;
+	Try(
+		colListGroup << Append( ::colListGroupRecall );
+		GroupName << SetText( ::GroupNameRecall );
+	);
+);
+
+
+DeleteButtonPress = Function( {this},
+print("Deleting columns");
+
+	dt = CurrentDataTable();
+	
+	selectedElements = colListGroup << GetSelected;
+	
+	show(N ItemS(selectedElements));
+	
+	dt << Delete Columns(selectedElements);
+	
+);
+
+DuplicatePress = Function( {this},
+	selectedElements = colListGroup << GetSelected;
+	
+	if(N Items(selectedElements) ==0, Throw());
+	
+	//colListGroup << RemoveAll;
+	
+	fDupCol = function({colname, new = "", dt = Current Data Table() },
+		col = Column(dt, colname);
+	
+		if(IsMissing(new), new = colname||" - Copy");
+	
+		col_script = char(col << Get Script);
+		col_script = substitute(col_script, "New Column", "dt << New Column");
+		col_script = substitute(col_script, colname, new);
+		eval(parse(col_script));
+		
+		colListGroup << Append( new );
+	);
+	
+	For( i = 1, i <= N Items(selectedElements), i++,
+		selectedElement = selectedElements[i];
+		print("Duplicating column", selectedElement);
+		fDupCol(selectedElement);
+		);
+	
+	
+/*	Eval(
+		Eval Expr(
+			For( i = 1, i <= N Items(selectedElements), i++,
+				print("Duplicating column", selectedElements[i]);
+				fDupCol(selectedElements[i];);
+			);
+			
+		)
+	);*/
+	
+	
+	//colListData << Reset;
+	//colListData << NameContains( " " );
+);
+)			),
+			Allocate(
+				List2 = H List Box();
+				Panel1 = Panel Box();
+				List5 = H List Box();
+				List4 = V List Box();
+				PanelMove = Panel Box();
+				ToFirstButton = Button Box();
+				MoveButton = Button Box();
+				ToLastButton = Button Box();
+				MoveButton6 = Button Box();
+				List7 = V List Box();
+				MoveButton4 = Button Box();
+				Text1 = Text Box();
+				colListData = Filter Col Selector( Data Table( DataTable1 ) );
+				SelectPanel = Panel Box();
+				GroupName = Text Edit Box();
+				List1 = H List Box();
+				List3 = V List Box();
+				YButton = Button Box();
+				PasteButton = Button Box();
+				RemoveButton = Button Box();
+				colListGroup = Col List Box( Data Table( DataTable1 ) );
+				Panel2 = Panel Box();
+				NameRadioBox = Radio Box();
+				RenameButton = Button Box();
+				List9 = V List Box();
+				ActionPanel = Panel Box();
+				List8 = V List Box();
+				OKbutton = Button Box();
+				UngroupButton = Button Box();
+				MoveButton1 = Button Box();
+				CancelButton = Button Box();
+				MoveButton2 = Button Box();
+				ResetButton = Button Box();
+				MoveButton3 = Button Box();
+				RecallButton = Button Box();
+				MoveButton5 = Button Box();
+				DuplicateButton = Button Box();
+				MoveButton8 = Button Box();
+				DeleteButton = Button Box();
+			),
+			Organize(
+				Reparent( List8( DeleteButton ) );
+				Reparent( List8( MoveButton8 ) );
+				Reparent( List8( DuplicateButton ) );
+				Reparent( List8( MoveButton5 ) );
+				Reparent( List8( RecallButton ) );
+				Reparent( List8( MoveButton3 ) );
+				Reparent( List8( ResetButton ) );
+				Reparent( List8( MoveButton2 ) );
+				Reparent( List8( CancelButton ) );
+				Reparent( List8( MoveButton1 ) );
+				Reparent( List8( UngroupButton ) );
+				Reparent( List8( OKbutton ) );
+				Reparent( ActionPanel( List8 ) );
+				Reparent( List9( ActionPanel ) );
+				Reparent( List2( List9 ) );
+				Reparent( Panel2( RenameButton ) );
+				Reparent( Panel2( NameRadioBox ) );
+				Reparent( SelectPanel( Panel2 ) );
+				Reparent( List1( colListGroup ) );
+				Reparent( List3( RemoveButton ) );
+				Reparent( List3( PasteButton ) );
+				Reparent( List3( YButton ) );
+				Reparent( List1( List3 ) );
+				Reparent( SelectPanel( List1 ) );
+				Reparent( SelectPanel( GroupName ) );
+				Reparent( List2( SelectPanel ) );
+				Reparent( List5( colListData ) );
+				Reparent( List7( Text1 ) );
+				Reparent( List7( MoveButton4 ) );
+				Reparent( List4( List7 ) );
+				Reparent( PanelMove( MoveButton6 ) );
+				Reparent( PanelMove( ToLastButton ) );
+				Reparent( PanelMove( MoveButton ) );
+				Reparent( PanelMove( ToFirstButton ) );
+				Reparent( List4( PanelMove ) );
+				Reparent( List5( List4 ) );
+				Reparent( Panel1( List5 ) );
+				Reparent( List2( Panel1 ) );
+				Relocate( List2( 0, 0 ) );
+			),
+			Initialize(
+				List2 << Background Color( 2147483647 );
+				List2 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List2 << Enabled( 1 );
+				List2 << Horizontal Alignment( "Center" );
+				List2 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List2 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List2 << Text Color( 2147483647 );
+				List2 << UI Only( 0 );
+				List2 << Vertical Alignment( "Center" );
+				List2 << Visibility( "Visible" );
+				List2 << Set Min Size( 1182, 622 );
+				List2 << Set Max Size( 1182, 622 );
+				List2 << Set Stretch( {"Neutral", "Neutral"} );
+				List2 << set horizontal( 1 );
+				Panel1 << Background Color( 2147483647 );
+				Panel1 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel1 << Enabled( 1 );
+				Panel1 << Horizontal Alignment( "Default" );
+				Panel1 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel1 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel1 << Text Color( 2147483647 );
+				Panel1 << UI Only( 0 );
+				Panel1 << Vertical Alignment( "Default" );
+				Panel1 << Visibility( "Visible" );
+				Panel1 << Set Min Size( 504, 418 );
+				Panel1 << Set Max Size( 504, 418 );
+				Panel1 << Set Stretch( {"Neutral", "Neutral"} );
+				Panel1 << Set Title( "Columns in your table" );
+				List5 << Background Color( 2147483647 );
+				List5 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List5 << Enabled( 1 );
+				List5 << Horizontal Alignment( "Default" );
+				List5 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List5 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List5 << Text Color( 2147483647 );
+				List5 << UI Only( 0 );
+				List5 << Vertical Alignment( "Default" );
+				List5 << Visibility( "Visible" );
+				List5 << Set Min Size( 468, 364 );
+				List5 << Set Max Size( 468, 364 );
+				List5 << Set Stretch( {"Neutral", "Neutral"} );
+				List5 << set horizontal( 1 );
+				List4 << Background Color( 2147483647 );
+				List4 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List4 << Enabled( 1 );
+				List4 << Horizontal Alignment( "Center" );
+				List4 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List4 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List4 << Text Color( 2147483647 );
+				List4 << UI Only( 0 );
+				List4 << Vertical Alignment( "Default" );
+				List4 << Visibility( "Visible" );
+				List4 << Set Min Size( 142, 330 );
+				List4 << Set Max Size( 142, 330 );
+				List4 << Set Stretch( {"Neutral", "Neutral"} );
+				List4 << set horizontal( 0 );
+				PanelMove << Background Color( 2147483647 );
+				PanelMove << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				PanelMove << Enabled( 1 );
+				PanelMove << Horizontal Alignment( "Center" );
+				PanelMove << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				PanelMove << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				PanelMove << Text Color( 2147483647 );
+				PanelMove << UI Only( 0 );
+				PanelMove << Vertical Alignment( "Center" );
+				PanelMove << Visibility( "Visible" );
+				PanelMove << Set Min Size( 118, 210 );
+				PanelMove << Set Max Size( 118, 210 );
+				PanelMove << Set Stretch( {"Neutral", "Neutral"} );
+				PanelMove << Set Title( "Move columns" );
+				ToFirstButton << Background Color( 2147483647 );
+				ToFirstButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ToFirstButton << Enabled( 1 );
+				ToFirstButton << Horizontal Alignment( "Center" );
+				ToFirstButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				ToFirstButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ToFirstButton << Text Color( 2147483647 );
+				ToFirstButton << UI Only( 0 );
+				ToFirstButton << Vertical Alignment( "Default" );
+				ToFirstButton << Visibility( "Visible" );
+				ToFirstButton << Set Min Size( 60, 20 );
+				ToFirstButton << Set Max Size( 60, 20 );
+				ToFirstButton << Set Stretch( {"Off", "Off"} );
+				ToFirstButton << Set Button Name( "To first" );
+				ToFirstButton << Style( "Normal" );
+				ToFirstButton << Set( 0 );
+				ToFirstButton << Set Icon( "" );
+				ToFirstButton << Set Icon Location( "Right" );
+				ToFirstButton << Set Function( ToFirstButtonPress );
+				MoveButton << Background Color( 2147483647 );
+				MoveButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton << Enabled( 1 );
+				MoveButton << Horizontal Alignment( "Center" );
+				MoveButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton << Text Color( 2147483647 );
+				MoveButton << UI Only( 0 );
+				MoveButton << Vertical Alignment( "Default" );
+				MoveButton << Visibility( "Hidden" );
+				MoveButton << Set Min Size( 78, 20 );
+				MoveButton << Set Max Size( 78, 20 );
+				MoveButton << Set Stretch( {"Off", "Off"} );
+				MoveButton << Set Button Name( "Move (FIXME)" );
+				MoveButton << Style( "Normal" );
+				MoveButton << Set( 0 );
+				MoveButton << Set Icon( "" );
+				MoveButton << Set Icon Location( "Right" );
+				MoveButton << Set Function( MoveButtonPress );
+				ToLastButton << Background Color( 2147483647 );
+				ToLastButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ToLastButton << Enabled( 1 );
+				ToLastButton << Horizontal Alignment( "Center" );
+				ToLastButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				ToLastButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ToLastButton << Text Color( 2147483647 );
+				ToLastButton << UI Only( 0 );
+				ToLastButton << Vertical Alignment( "Default" );
+				ToLastButton << Visibility( "Visible" );
+				ToLastButton << Set Min Size( 60, 20 );
+				ToLastButton << Set Max Size( 60, 20 );
+				ToLastButton << Set Stretch( {"Off", "Off"} );
+				ToLastButton << Set Button Name( "To Last" );
+				ToLastButton << Style( "Normal" );
+				ToLastButton << Set( 0 );
+				ToLastButton << Set Icon( "" );
+				ToLastButton << Set Icon Location( "Right" );
+				ToLastButton << Set Function( ToLastButtonPress );
+				MoveButton6 << Background Color( 2147483647 );
+				MoveButton6 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton6 << Enabled( 1 );
+				MoveButton6 << Horizontal Alignment( "Center" );
+				MoveButton6 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton6 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton6 << Text Color( 2147483647 );
+				MoveButton6 << UI Only( 0 );
+				MoveButton6 << Vertical Alignment( "Default" );
+				MoveButton6 << Visibility( "Hidden" );
+				MoveButton6 << Set Min Size( 78, 20 );
+				MoveButton6 << Set Max Size( 78, 20 );
+				MoveButton6 << Set Stretch( {"Off", "Off"} );
+				MoveButton6 << Set Button Name( "Move (FIXME)" );
+				MoveButton6 << Style( "Normal" );
+				MoveButton6 << Set( 0 );
+				MoveButton6 << Set Icon( "" );
+				MoveButton6 << Set Icon Location( "Right" );
+				MoveButton6 << Set Function( MoveButtonPress );
+				List7 << Background Color( 2147483647 );
+				List7 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List7 << Enabled( 1 );
+				List7 << Horizontal Alignment( "Default" );
+				List7 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List7 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List7 << Text Color( 2147483647 );
+				List7 << UI Only( 0 );
+				List7 << Vertical Alignment( "Default" );
+				List7 << Visibility( "Visible" );
+				List7 << Set Min Size( 122, 80 );
+				List7 << Set Max Size( 122, 80 );
+				List7 << Set Stretch( {"Neutral", "Neutral"} );
+				List7 << set horizontal( 0 );
+				MoveButton4 << Background Color( 2147483647 );
+				MoveButton4 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton4 << Enabled( 1 );
+				MoveButton4 << Horizontal Alignment( "Center" );
+				MoveButton4 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton4 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton4 << Text Color( 2147483647 );
+				MoveButton4 << UI Only( 0 );
+				MoveButton4 << Vertical Alignment( "Default" );
+				MoveButton4 << Visibility( "Hidden" );
+				MoveButton4 << Set Min Size( 78, 20 );
+				MoveButton4 << Set Max Size( 78, 20 );
+				MoveButton4 << Set Stretch( {"Off", "Off"} );
+				MoveButton4 << Set Button Name( "Move (FIXME)" );
+				MoveButton4 << Style( "Normal" );
+				MoveButton4 << Set( 0 );
+				MoveButton4 << Set Icon( "" );
+				MoveButton4 << Set Icon Location( "Right" );
+				MoveButton4 << Set Function( MoveButtonPress4 );
+				Text1 << Background Color( 2147483647 );
+				Text1 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Text1 << Enabled( 1 );
+				Text1 << Horizontal Alignment( "Center" );
+				Text1 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Text1 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Text1 << Text Color( 0 );
+				Text1 << UI Only( 0 );
+				Text1 << Vertical Alignment( "Center" );
+				Text1 << Visibility( "Visible" );
+				Text1 << Set Min Size( 102, 16 );
+				Text1 << Set Max Size( 102, 16 );
+				Text1 << Set Stretch( {"Off", "Off"} );
+				Text1 << Set Base Font( "Text" );
+				Text1 << Set Font Name( "Segoe UI Light" );
+				Text1 << Set Font Style( "Italic" );
+				Text1 << Set Font Size( 9 );
+				Text1 << Set Font Scale( 1 );
+				Text1 << Set Text( "JMP-MES-connector" );
+				Text1 << Bullet point( 0 );
+				Text1 << Justify Text( "Left" );
+				Text1 << Rotate Text( "Horizontal" );
+				Text1 << Set Width( -1 );
+				Text1 << Set Wrap( 360 );
+				Text1 << Set Tip( "" );
+				colListData << Background Color( 2147483647 );
+				colListData << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListData << Enabled( 1 );
+				colListData << Horizontal Alignment( "Default" );
+				colListData << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListData << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListData << Text Color( 2147483647 );
+				colListData << UI Only( 0 );
+				colListData << User Resizable( {1, 1} );
+				colListData << Vertical Alignment( "Default" );
+				colListData << Visibility( "Visible" );
+				colListData << Set Min Size( 276, 293 );
+				colListData << Set Max Size( 276, 293 );
+				colListData << Set Stretch( {"Neutral", "Neutral"} );
+				colListData << Set Base Font( "Text" );
+				colListData << Set Font Name( "Segoe UI" );
+				colListData << Set Font Style( "Plain" );
+				colListData << Set Font Size( 9 );
+				colListData << Set Font Scale( 1 );
+				colListData << Set Max Selected( -1 );
+				colListData << Set Size( 276, 293 );
+				colListData << Set N Lines( 17 );
+				SelectPanel << Background Color( 2147483647 );
+				SelectPanel << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				SelectPanel << Enabled( 1 );
+				SelectPanel << Horizontal Alignment( "Default" );
+				SelectPanel << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				SelectPanel << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				SelectPanel << Text Color( 2147483647 );
+				SelectPanel << UI Only( 0 );
+				SelectPanel << Vertical Alignment( "Default" );
+				SelectPanel << Visibility( "Visible" );
+				SelectPanel << Set Min Size( 460, 570 );
+				SelectPanel << Set Max Size( 460, 570 );
+				SelectPanel << Set Stretch( {"Neutral", "Neutral"} );
+				SelectPanel << Set Title( "Select and name your group" );
+				GroupName << Background Color( 2147483647 );
+				GroupName << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				GroupName << Enabled( 1 );
+				GroupName << Horizontal Alignment( "Default" );
+				GroupName << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				GroupName << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				GroupName << Text Color( 101 );
+				GroupName << UI Only( 0 );
+				GroupName << User Resizable( {1, 1} );
+				GroupName << Vertical Alignment( "Default" );
+				GroupName << Visibility( "Visible" );
+				GroupName << Set Min Size( 365, 23 );
+				GroupName << Set Max Size( 365, 23 );
+				GroupName << Set Stretch( {"Off", "Off"} );
+				GroupName << Set Base Font( "Text" );
+				GroupName << Set Font Scale( 1 );
+				GroupName << Set Text( "Group name" );
+				GroupName << Bullet point( 0 );
+				GroupName << Justify Text( "Left" );
+				GroupName << Rotate Text( "Horizontal" );
+				GroupName << Set Width( 365 );
+				GroupName << Set Wrap( 365 );
+				GroupName << Set Tip( "" );
+				GroupName << Set Lock( 0 );
+				GroupName << Set PW Style( 0 );
+				GroupName << Set Hint( "" );
+				List1 << Background Color( 2147483647 );
+				List1 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List1 << Enabled( 1 );
+				List1 << Horizontal Alignment( "Default" );
+				List1 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List1 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List1 << Text Color( 2147483647 );
+				List1 << UI Only( 0 );
+				List1 << Vertical Alignment( "Default" );
+				List1 << Visibility( "Visible" );
+				List1 << Set Min Size( 424, 290 );
+				List1 << Set Max Size( 424, 290 );
+				List1 << Set Stretch( {"Neutral", "Neutral"} );
+				List1 << set horizontal( 1 );
+				List3 << Background Color( 2147483647 );
+				List3 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List3 << Enabled( 1 );
+				List3 << Horizontal Alignment( "Default" );
+				List3 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List3 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List3 << Text Color( 2147483647 );
+				List3 << UI Only( 0 );
+				List3 << Vertical Alignment( "Default" );
+				List3 << Visibility( "Visible" );
+				List3 << Set Min Size( 84, 132 );
+				List3 << Set Max Size( 84, 132 );
+				List3 << Set Stretch( {"Neutral", "Neutral"} );
+				List3 << set horizontal( 0 );
+				YButton << Background Color( 2147483647 );
+				YButton << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				YButton << Enabled( 1 );
+				YButton << Horizontal Alignment( "Default" );
+				YButton << Margin( {Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )} );
+				YButton << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				YButton << Text Color( 2147483647 );
+				YButton << UI Only( 0 );
+				YButton << Vertical Alignment( "Default" );
+				YButton << Visibility( "Visible" );
+				YButton << Set Min Size( 60, 20 );
+				YButton << Set Max Size( 60, 20 );
+				YButton << Set Stretch( {"Off", "Off"} );
+				YButton << Set Button Name( "Y" );
+				YButton << Style( "Normal" );
+				YButton << Set( 0 );
+				YButton << Set Icon( "" );
+				YButton << Set Icon Location( "Right" );
+				YButton << Set Function( YButtonPress );
+				PasteButton << Background Color( 2147483647 );
+				PasteButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				PasteButton << Enabled( 1 );
+				PasteButton << Horizontal Alignment( "Default" );
+				PasteButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				PasteButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				PasteButton << Text Color( 2147483647 );
+				PasteButton << UI Only( 0 );
+				PasteButton << Vertical Alignment( "Default" );
+				PasteButton << Visibility( "Visible" );
+				PasteButton << Set Min Size( 60, 20 );
+				PasteButton << Set Max Size( 60, 20 );
+				PasteButton << Set Stretch( {"Off", "Off"} );
+				PasteButton << Set Button Name( "Paste" );
+				PasteButton << Style( "Normal" );
+				PasteButton << Set( 0 );
+				PasteButton << Set Icon( "" );
+				PasteButton << Set Icon Location( "Right" );
+				PasteButton << Set Function( PasteButtonPress );
+				RemoveButton << Background Color( 2147483647 );
+				RemoveButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RemoveButton << Enabled( 1 );
+				RemoveButton << Horizontal Alignment( "Default" );
+				RemoveButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				RemoveButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RemoveButton << Text Color( 2147483647 );
+				RemoveButton << UI Only( 0 );
+				RemoveButton << Vertical Alignment( "Default" );
+				RemoveButton << Visibility( "Visible" );
+				RemoveButton << Set Min Size( 60, 20 );
+				RemoveButton << Set Max Size( 60, 20 );
+				RemoveButton << Set Stretch( {"Off", "Off"} );
+				RemoveButton << Set Button Name( "Remove" );
+				RemoveButton << Style( "Normal" );
+				RemoveButton << Set( 0 );
+				RemoveButton << Set Icon( "" );
+				RemoveButton << Set Icon Location( "Right" );
+				RemoveButton << Set Function( RemoveButtonPress );
+				colListGroup << Background Color( 2147483647 );
+				colListGroup << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListGroup << Enabled( 1 );
+				colListGroup << Horizontal Alignment( "Default" );
+				colListGroup << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListGroup << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				colListGroup << Text Color( 2147483647 );
+				colListGroup << UI Only( 0 );
+				colListGroup << User Resizable( {1, 1} );
+				colListGroup << Vertical Alignment( "Default" );
+				colListGroup << Visibility( "Visible" );
+				colListGroup << Set Min Size( 300, 270 );
+				colListGroup << Set Max Size( 300, 270 );
+				colListGroup << Set Stretch( {"Off", "Off"} );
+				colListGroup << Modeling Type(
+					{"Continuous", "Ordinal", "Nominal"}
+				);
+				colListGroup << Set Data Type( "Any" );
+				colListGroup << Set Min Items( 0 );
+				colListGroup << Set Max Items( -1 );
+				colListGroup << Set Max Selected( -1 );
+				colListGroup << Set Size( 300, 270 );
+				colListGroup << Set N Lines( 14 );
+				colListGroup << Set Base Font( "Text" );
+				colListGroup << Set Font Scale( 1 );
+				Panel2 << Background Color( 2147483647 );
+				Panel2 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel2 << Enabled( 1 );
+				Panel2 << Horizontal Alignment( "Center" );
+				Panel2 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel2 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				Panel2 << Text Color( 2147483647 );
+				Panel2 << UI Only( 0 );
+				Panel2 << Vertical Alignment( "Default" );
+				Panel2 << Visibility( "Visible" );
+				Panel2 << Set Min Size( 184, 163 );
+				Panel2 << Set Max Size( 184, 163 );
+				Panel2 << Set Stretch( {"Neutral", "Neutral"} );
+				Panel2 << Set Title( "Rename columns by" );
+				NameRadioBox << Background Color( 2147483647 );
+				NameRadioBox << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				NameRadioBox << Enabled( 1 );
+				NameRadioBox << Horizontal Alignment( "Default" );
+				NameRadioBox << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				NameRadioBox << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				NameRadioBox << Text Color( 2147483647 );
+				NameRadioBox << UI Only( 0 );
+				NameRadioBox << Vertical Alignment( "Default" );
+				NameRadioBox << Visibility( "Visible" );
+				NameRadioBox << Set Min Size( 144, 61 );
+				NameRadioBox << Set Max Size( 144, 61 );
+				NameRadioBox << Set Stretch( {"Neutral", "Neutral"} );
+				NameRadioBox << Set Items(
+					{"Formula", "Tagname", "Tag (description) [units]", "Original"}
+				);
+				NameRadioBox << Set Min Size( 144, 61 );
+				NameRadioBox << Set Max Size( 144, 61 );
+				NameRadioBox << Set Stretch( {"Neutral", "Neutral"} );
+				RenameButton << Background Color( 2147483647 );
+				RenameButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RenameButton << Enabled( 1 );
+				RenameButton << Horizontal Alignment( "Default" );
+				RenameButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				RenameButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RenameButton << Text Color( 2147483647 );
+				RenameButton << UI Only( 0 );
+				RenameButton << Vertical Alignment( "Default" );
+				RenameButton << Visibility( "Visible" );
+				RenameButton << Set Min Size( 60, 20 );
+				RenameButton << Set Max Size( 60, 20 );
+				RenameButton << Set Stretch( {"Off", "Off"} );
+				RenameButton << Set Button Name( "Rename" );
+				RenameButton << Style( "Normal" );
+				RenameButton << Set( 0 );
+				RenameButton << Set Icon( "" );
+				RenameButton << Set Icon Location( "Right" );
+				RenameButton << Set Function( RenameButtonPress );
+				List9 << Background Color( 2147483647 );
+				List9 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List9 << Enabled( 1 );
+				List9 << Horizontal Alignment( "Default" );
+				List9 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List9 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List9 << Text Color( 2147483647 );
+				List9 << UI Only( 0 );
+				List9 << Vertical Alignment( "Default" );
+				List9 << Visibility( "Visible" );
+				List9 << Set Min Size( 158, 602 );
+				List9 << Set Max Size( 158, 602 );
+				List9 << Set Stretch( {"Neutral", "Neutral"} );
+				List9 << set horizontal( 0 );
+				ActionPanel << Background Color( 2147483647 );
+				ActionPanel << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ActionPanel << Enabled( 1 );
+				ActionPanel << Horizontal Alignment( "Default" );
+				ActionPanel << Margin(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ActionPanel << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ActionPanel << Text Color( 2147483647 );
+				ActionPanel << UI Only( 0 );
+				ActionPanel << Vertical Alignment( "Default" );
+				ActionPanel << Visibility( "Visible" );
+				ActionPanel << Set Min Size( 138, 582 );
+				ActionPanel << Set Max Size( 138, 582 );
+				ActionPanel << Set Stretch( {"Neutral", "Neutral"} );
+				ActionPanel << Set Title( "Group actions" );
+				List8 << Background Color( 2147483647 );
+				List8 << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List8 << Enabled( 1 );
+				List8 << Horizontal Alignment( "Default" );
+				List8 << Margin( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List8 << Padding( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				List8 << Text Color( 2147483647 );
+				List8 << UI Only( 0 );
+				List8 << Vertical Alignment( "Center" );
+				List8 << Visibility( "Visible" );
+				List8 << Set Min Size( 102, 528 );
+				List8 << Set Max Size( 102, 528 );
+				List8 << Set Stretch( {"Neutral", "Neutral"} );
+				List8 << set horizontal( 0 );
+				OKbutton << Background Color( 2147483647 );
+				OKbutton << Border( {Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )} );
+				OKbutton << Enabled( 1 );
+				OKbutton << Horizontal Alignment( "Center" );
+				OKbutton << Margin( {Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )} );
+				OKbutton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				OKbutton << Text Color( 2147483647 );
+				OKbutton << UI Only( 0 );
+				OKbutton << Vertical Alignment( "Center" );
+				OKbutton << Visibility( "Visible" );
+				OKbutton << Set Min Size( 60, 20 );
+				OKbutton << Set Max Size( 60, 20 );
+				OKbutton << Set Stretch( {"Off", "Off"} );
+				OKbutton << Set Button Name( "Group" );
+				OKbutton << Style( "Normal" );
+				OKbutton << Set( 0 );
+				OKbutton << Set Icon( "" );
+				OKbutton << Set Icon Location( "Right" );
+				OKbutton << Set Function( OKbuttonPress );
+				UngroupButton << Background Color( 2147483647 );
+				UngroupButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				UngroupButton << Enabled( 1 );
+				UngroupButton << Horizontal Alignment( "Center" );
+				UngroupButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				UngroupButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				UngroupButton << Text Color( 2147483647 );
+				UngroupButton << UI Only( 0 );
+				UngroupButton << Vertical Alignment( "Default" );
+				UngroupButton << Visibility( "Visible" );
+				UngroupButton << Set Min Size( 60, 20 );
+				UngroupButton << Set Max Size( 60, 20 );
+				UngroupButton << Set Stretch( {"Off", "Off"} );
+				UngroupButton << Set Button Name( "Ungroup" );
+				UngroupButton << Style( "Normal" );
+				UngroupButton << Set( 0 );
+				UngroupButton << Set Icon( "" );
+				UngroupButton << Set Icon Location( "Right" );
+				UngroupButton << Set Function( UngroupButtonPress );
+				MoveButton1 << Background Color( 2147483647 );
+				MoveButton1 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton1 << Enabled( 1 );
+				MoveButton1 << Horizontal Alignment( "Center" );
+				MoveButton1 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton1 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton1 << Text Color( 2147483647 );
+				MoveButton1 << UI Only( 0 );
+				MoveButton1 << Vertical Alignment( "Default" );
+				MoveButton1 << Visibility( "Hidden" );
+				MoveButton1 << Set Min Size( 78, 20 );
+				MoveButton1 << Set Max Size( 78, 20 );
+				MoveButton1 << Set Stretch( {"Off", "Off"} );
+				MoveButton1 << Set Button Name( "Move (FIXME)" );
+				MoveButton1 << Style( "Normal" );
+				MoveButton1 << Set( 0 );
+				MoveButton1 << Set Icon( "" );
+				MoveButton1 << Set Icon Location( "Right" );
+				MoveButton1 << Set Function( MoveButtonPress1 );
+				CancelButton << Background Color( 2147483647 );
+				CancelButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				CancelButton << Enabled( 1 );
+				CancelButton << Horizontal Alignment( "Center" );
+				CancelButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				CancelButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				CancelButton << Text Color( 2147483647 );
+				CancelButton << UI Only( 0 );
+				CancelButton << Vertical Alignment( "Default" );
+				CancelButton << Visibility( "Visible" );
+				CancelButton << Set Min Size( 60, 20 );
+				CancelButton << Set Max Size( 60, 20 );
+				CancelButton << Set Stretch( {"Off", "Off"} );
+				CancelButton << Set Button Name( "Cancel" );
+				CancelButton << Style( "Normal" );
+				CancelButton << Set( 0 );
+				CancelButton << Set Icon( "" );
+				CancelButton << Set Icon Location( "Right" );
+				CancelButton << Set Function( CancelButtonPress );
+				MoveButton2 << Background Color( 2147483647 );
+				MoveButton2 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton2 << Enabled( 1 );
+				MoveButton2 << Horizontal Alignment( "Center" );
+				MoveButton2 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton2 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton2 << Text Color( 2147483647 );
+				MoveButton2 << UI Only( 0 );
+				MoveButton2 << Vertical Alignment( "Default" );
+				MoveButton2 << Visibility( "Hidden" );
+				MoveButton2 << Set Min Size( 78, 20 );
+				MoveButton2 << Set Max Size( 78, 20 );
+				MoveButton2 << Set Stretch( {"Off", "Off"} );
+				MoveButton2 << Set Button Name( "Move (FIXME)" );
+				MoveButton2 << Style( "Normal" );
+				MoveButton2 << Set( 0 );
+				MoveButton2 << Set Icon( "" );
+				MoveButton2 << Set Icon Location( "Right" );
+				MoveButton2 << Set Function( MoveButtonPress2 );
+				ResetButton << Background Color( 2147483647 );
+				ResetButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ResetButton << Enabled( 1 );
+				ResetButton << Horizontal Alignment( "Center" );
+				ResetButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				ResetButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				ResetButton << Text Color( 2147483647 );
+				ResetButton << UI Only( 0 );
+				ResetButton << Vertical Alignment( "Default" );
+				ResetButton << Visibility( "Visible" );
+				ResetButton << Set Min Size( 60, 20 );
+				ResetButton << Set Max Size( 60, 20 );
+				ResetButton << Set Stretch( {"Off", "Off"} );
+				ResetButton << Set Button Name( "Reset" );
+				ResetButton << Style( "Normal" );
+				ResetButton << Set( 0 );
+				ResetButton << Set Icon( "" );
+				ResetButton << Set Icon Location( "Right" );
+				ResetButton << Set Function( ResetButtonPress );
+				MoveButton3 << Background Color( 2147483647 );
+				MoveButton3 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton3 << Enabled( 1 );
+				MoveButton3 << Horizontal Alignment( "Center" );
+				MoveButton3 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton3 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton3 << Text Color( 2147483647 );
+				MoveButton3 << UI Only( 0 );
+				MoveButton3 << Vertical Alignment( "Default" );
+				MoveButton3 << Visibility( "Hidden" );
+				MoveButton3 << Set Min Size( 78, 20 );
+				MoveButton3 << Set Max Size( 78, 20 );
+				MoveButton3 << Set Stretch( {"Off", "Off"} );
+				MoveButton3 << Set Button Name( "Move (FIXME)" );
+				MoveButton3 << Style( "Normal" );
+				MoveButton3 << Set( 0 );
+				MoveButton3 << Set Icon( "" );
+				MoveButton3 << Set Icon Location( "Right" );
+				MoveButton3 << Set Function( MoveButtonPress3 );
+				RecallButton << Background Color( 2147483647 );
+				RecallButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RecallButton << Enabled( 1 );
+				RecallButton << Horizontal Alignment( "Center" );
+				RecallButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				RecallButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				RecallButton << Text Color( 2147483647 );
+				RecallButton << UI Only( 0 );
+				RecallButton << Vertical Alignment( "Default" );
+				RecallButton << Visibility( "Visible" );
+				RecallButton << Set Min Size( 60, 20 );
+				RecallButton << Set Max Size( 60, 20 );
+				RecallButton << Set Stretch( {"Off", "Off"} );
+				RecallButton << Set Button Name( "Recall" );
+				RecallButton << Style( "Normal" );
+				RecallButton << Set( 0 );
+				RecallButton << Set Icon( "" );
+				RecallButton << Set Icon Location( "Right" );
+				RecallButton << Set Function( RecallButtonPress );
+				MoveButton5 << Background Color( 2147483647 );
+				MoveButton5 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton5 << Enabled( 1 );
+				MoveButton5 << Horizontal Alignment( "Center" );
+				MoveButton5 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton5 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton5 << Text Color( 2147483647 );
+				MoveButton5 << UI Only( 0 );
+				MoveButton5 << Vertical Alignment( "Default" );
+				MoveButton5 << Visibility( "Hidden" );
+				MoveButton5 << Set Min Size( 78, 20 );
+				MoveButton5 << Set Max Size( 78, 20 );
+				MoveButton5 << Set Stretch( {"Off", "Off"} );
+				MoveButton5 << Set Button Name( "Move (FIXME)" );
+				MoveButton5 << Style( "Normal" );
+				MoveButton5 << Set( 0 );
+				MoveButton5 << Set Icon( "" );
+				MoveButton5 << Set Icon Location( "Right" );
+				MoveButton5 << Set Function( MoveButtonPress5 );
+				DuplicateButton << Background Color( 2147483647 );
+				DuplicateButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				DuplicateButton << Enabled( 1 );
+				DuplicateButton << Horizontal Alignment( "Center" );
+				DuplicateButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				DuplicateButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				DuplicateButton << Text Color( 2147483647 );
+				DuplicateButton << UI Only( 0 );
+				DuplicateButton << Vertical Alignment( "Default" );
+				DuplicateButton << Visibility( "Visible" );
+				DuplicateButton << Set Min Size( 60, 20 );
+				DuplicateButton << Set Max Size( 60, 20 );
+				DuplicateButton << Set Stretch( {"Off", "Off"} );
+				DuplicateButton << Set Button Name( "Duplicate" );
+				DuplicateButton << Style( "Normal" );
+				DuplicateButton << Set( 0 );
+				DuplicateButton << Set Icon( "" );
+				DuplicateButton << Set Icon Location( "Right" );
+				DuplicateButton << Set Function( DuplicatePress );
+				MoveButton8 << Background Color( 2147483647 );
+				MoveButton8 << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton8 << Enabled( 1 );
+				MoveButton8 << Horizontal Alignment( "Center" );
+				MoveButton8 << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				MoveButton8 << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				MoveButton8 << Text Color( 2147483647 );
+				MoveButton8 << UI Only( 0 );
+				MoveButton8 << Vertical Alignment( "Default" );
+				MoveButton8 << Visibility( "Hidden" );
+				MoveButton8 << Set Min Size( 78, 20 );
+				MoveButton8 << Set Max Size( 78, 20 );
+				MoveButton8 << Set Stretch( {"Off", "Off"} );
+				MoveButton8 << Set Button Name( "Move (FIXME)" );
+				MoveButton8 << Style( "Normal" );
+				MoveButton8 << Set( 0 );
+				MoveButton8 << Set Icon( "" );
+				MoveButton8 << Set Icon Location( "Right" );
+				MoveButton8 << Set Function( MoveButtonPress5 );
+				DeleteButton << Background Color( 2147483647 );
+				DeleteButton << Border(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				DeleteButton << Enabled( 1 );
+				DeleteButton << Horizontal Alignment( "Center" );
+				DeleteButton << Margin(
+					{Left( 2 ), Top( 2 ), Right( 2 ), Bottom( 2 )}
+				);
+				DeleteButton << Padding(
+					{Left( 0 ), Top( 0 ), Right( 0 ), Bottom( 0 )}
+				);
+				DeleteButton << Text Color( 2147483647 );
+				DeleteButton << UI Only( 0 );
+				DeleteButton << Vertical Alignment( "Default" );
+				DeleteButton << Visibility( "Visible" );
+				DeleteButton << Set Min Size( 63, 20 );
+				DeleteButton << Set Max Size( 63, 20 );
+				DeleteButton << Set Stretch( {"Off", "Off"} );
+				DeleteButton << Set Button Name( "⚠️ Delete " );
+				DeleteButton << Style( "Normal" );
+				DeleteButton << Set( 0 );
+				DeleteButton << Set Icon( "" );
+				DeleteButton << Set Icon Location( "Right" );
+				DeleteButton << Set Function( DeleteButtonPress );
+			)
+		)
+	),
+	Initialize(
+		Module1 << Auto Launch( 1 );
+		Module1 << Set Module Type( "Report" );
+		Module1 << Set Window Title( "^TABLENAME - ^APPNAME" );
+	)
+)
