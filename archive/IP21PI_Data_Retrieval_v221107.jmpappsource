@@ -950,11 +950,11 @@ WHERE ((REQUEST = " || Request || ")
 				
 				show(tag_dtype);
 				
-				if(tag_dtype=="Analog" || "AI",
+				if(tag_dtype=="Analog" | tag_dtype=="AI",
 					Column(dt_new, "VALUE") <<data type(numeric)<<modeling type(continuous)
 				);
 				
-				if( (tag_dtype=="Discrete" || "DI") & TableIP21=="HISTORY(80)",
+				if( (tag_dtype=="Discrete" | tag_dtype=="DI") & TableIP21=="HISTORY(80)",
 				    Column(dt_new, "VALUE")<< Set Modeling Type( "Ordinal" );
 				);
 		
@@ -1454,11 +1454,11 @@ WHERE ((REQUEST = " || Request || ")
 				
 					// Configuring JMP to save CSV as commas and not 
 				
-				if(tag_dtype=="Analog" || "AI",
+				if(tag_dtype=="Analog" | tag_dtype=="AI",
 					Column(dt_new, "VALUE") <<data type(numeric)<<modeling type(continuous)
 				);
 				
-				if((tag_dtype=="Discrete" || "DI") & TableIP21=="HISTORY(80)",
+				if((tag_dtype=="Discrete" | tag_dtype=="DI") & TableIP21=="HISTORY(80)",
 				    Column(dt_new, "VALUE")<< Set Modeling Type( "Ordinal" );
 				);
 				print("Summarizing stacked table");
