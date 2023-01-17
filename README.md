@@ -53,7 +53,7 @@ Use update() to keep track of all new and old data.
 # How can I organize all the tags (columns) after the extraction?
 
 You can easily group and ungroup the tags with our Column Organizer add-in
-[Download](https://github.com/industrial-data/JMP-MES-connector/raw/main/Column%20organizer%20v220905.jmpaddin)
+[Download](https://github.com/industrial-data/JMP-MES-connector/raw/main/Column_organizer/Column%20organizer%20v220905.jmpaddin)
 
 ![](media/image2.png)
 
