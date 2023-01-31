@@ -31,6 +31,16 @@ The **interface** allows users to:
 5. Select the extraction type (interpolated, average and actual values)
 6. Select the extraction period (10 minutes by default)
 
+To use the add-in, make sure to put your server details properly:
+
+![](media/custom_server_name.png)
+1.1 You can edit the server name from the list by using this checbox
+1.2 Make sure the proper server type is selected (IP.21 or PI)
+1.3 Introduce your server name address (e.g., globcorp001)
+1.4 Introduce the domain, usually this is optional
+1.5 (Optional) Include a description 
+1.a You can load your own server list (URL or file path pointing to a CSV).
+
 The extraction is done tag by tag with a high limit of rows (100,000) per tag to not saturate the server.
 
 You can check the log to track the progress of the data extraction. It should be fast enough for most cases unless limited by connectivity speed (e.g., VPN). Please notify in advance your OT/IT team if you are planning for massive data extractions.
