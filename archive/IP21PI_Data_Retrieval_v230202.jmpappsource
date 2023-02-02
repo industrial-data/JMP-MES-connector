@@ -2504,6 +2504,29 @@ WHERE ((REQUEST = " || Request || ")
 				Print("No information to extract for this tag (probably a no numeric data type)");
 			);
 			
+			// new 2023!!!
+			print("Storing raw data extraction in concatenated table");
+			// Concatenate raw extraction tables
+			if(TransposedtableExist == 0,
+				print("Creating main concatenated table");
+				dt_concat = dt_temp << Subset( All rows, Selected columns only( 0 ));
+				
+				/// remove source code in script window
+				script_names = dt_concat<<get table script names;
+				dt_concat<<delete scripts(script_names);
+				
+				dt_concat << Show Window( 0 );
+				dt_concat << SetName( "Table with concatenated data");
+			);
+			
+			if(TransposedtableExist == 1,	
+				print("adding new data extraction rows to main concatenated table");
+				dt_concat << Concatenate(
+					dt_temp,
+					Append to first table);
+			);
+			
+				
 			Close( dt_temp, nosave ); // Comment this to debug
 			
 			print("Tag was extracted properly");
