@@ -34,12 +34,14 @@ The **interface** allows users to:
 To use the add-in, make sure to put your server details properly:
 
 ![](media/custom_server_name.png)
-1.1 You can edit the server name from the list by using this checbox
-1.2 Make sure the proper server type is selected (IP.21 or PI)
-1.3 Introduce your server name address (e.g., globcorp001)
-1.4 Introduce the domain, usually this is optional
-1.5 (Optional) Include a description 
-1.a You can load your own server list (URL or file path pointing to a CSV).
+
+
+- You can edit the server name from the list by using this checbox
+- Make sure the proper server type is selected (IP.21 or PI)
+- Introduce your server name address (e.g., globcorp001)
+- Introduce the domain, usually this is optional
+- (Optional) Include a description 
+- You can load your own server list (URL or file path pointing to a CSV).
 
 The extraction is done tag by tag with a high limit of rows (100,000) per tag to not saturate the server.
 
