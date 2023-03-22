@@ -4,9 +4,14 @@ Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
 
 :inbox_tray: [Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/MES%20Data%20Retrieval%20(IP21-PI)_v_latest.jmpaddin)
 
+
+:inbox_tray: [+ Column organizer](https://github.com/industrial-data/JMP-MES-connector/raw/main/column_organizer/Column%20organizer%20v220905.jmpaddi)
+
 This add-in automates data extraction tasks from Aspentech IP.21 and Osisoft PI (Aveva) historians.
 
-This way, you can use JMP to diagnose manufacturing problems and monitor several tags daily and weekly. See our [review](https://pubs.rsc.org/en/content/articlelanding/2022/re/d1re00541c) for more industrial data science applications.
+This way, you can use JMP to diagnose manufacturing problems and monitor several tags daily and weekly.
+
+Have a look at this [review](https://pubs.rsc.org/en/content/articlelanding/2022/re/d1re00541c) for more industrial data science applications.
 
 If you would like JMP to support historians natively, give it a thumbs up in the [wishlist](https://community.jmp.com/t5/JMP-Wish-List/Native-Support-to-Manufacturing-Historians-Aspentech-IP-21-and/idi-p/540846).
 
