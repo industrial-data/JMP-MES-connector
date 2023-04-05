@@ -15,6 +15,8 @@ Have a look at this [review](https://pubs.rsc.org/en/content/articlelanding/2022
 
 If you would like JMP to support historians natively, give it a thumbs up in the [wishlist](https://community.jmp.com/t5/JMP-Wish-List/Native-Support-to-Manufacturing-Historians-Aspentech-IP-21-and/idi-p/540846).
 
+Similar work: [JMP OsiPITools](https://github.com/himanga/JMPOSIPITools), [Tagreader Python library](https://github.com/equinor/tagreader-python).
+
 # Requirements
 
 - JMP v15 or higher
@@ -102,10 +104,3 @@ We have several improvements in mind.
 - Add more extraction options
 
 Meanwhile, suggestions, issues, and pull requests are more than welcome.
-
-If you are only using PI, you should check a similar add-in with some of these features already developed.
-
-Aveva/OSISoft PI Tools from @IH
-
-[https://community.jmp.com/t5/JMP-Add-Ins/Aveva-OSISoft-PI-Tools/ta-p/224525](https://community.jmp.com/t5/JMP-Add-Ins/Aveva-OSISoft-PI-Tools/ta-p/224525)
-
