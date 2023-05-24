@@ -94,6 +94,14 @@ You can modify the source code and GUI at your will. The requisite is to keep th
 
 ![](media/image3.png)
 
+# Known issues
+
+If JMP Log window shows timeout errors when extracting PI data, please consider increasing timeout times in PI SDK.
+
+![](https://user-images.githubusercontent.com/5269170/240621819-43e39afb-1fb4-430e-9162-c028e0db7502.png)
+
+You can also contact your PI administrator to understand why long connection times occur.
+
 # Roadmap
 
 We have several improvements in mind.
