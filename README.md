@@ -2,8 +2,7 @@
 
 Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
 
-:inbox_tray: [Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/MES%20Data%20Retrieval%20(IP21-PI)_v_latest.jmpaddin)
-
+:inbox_tray: [Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/IP21PI_Data_Retrieval_v_latest.jmpaddin)
 
 :inbox_tray: [+ Column organizer](https://github.com/industrial-data/JMP-MES-connector/raw/main/column_organizer/Column%20organizer%20v220905.jmpaddin)
 
