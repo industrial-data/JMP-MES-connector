@@ -1,6 +1,6 @@
 # MES data retrieval add-in - Aspentech IP.21 and Osisoft PI (Aveva)
 
-Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute)
+Aspentech IP.21 and Osisoft PI connector to JMP (SAS Institute), you can find a walk-through demo [here](https://community.jmp.com/t5/Discovery-Summit-Europe-2023/Scaling-up-the-Use-of-Machine-Learning-in-Chemical-Process/ta-p/572644) (add-in shown at minute 21).
 
 :inbox_tray: [Download latest version](https://github.com/industrial-data/JMP-MES-connector/raw/main/IP21PI_Data_Retrieval_v_latest.jmpaddin)
 
