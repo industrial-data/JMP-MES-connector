@@ -1,0 +1,69 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Progress Bar
+ * Version         : 2.0
+ * Description:
+ *
+ * This is the script wich handles the progress bar
+ *
+ ************************************************************/
+
+progress = New Namespace(
+	"Progress"
+);
+
+progress:init = Function( {workload, WindowSize},
+	progress:TotalWork = workload;
+	progress:Current = -1;
+	progress:tick = Tick Seconds();
+	
+	progress:Window = New Window( "Progress",
+		Show Menu( 0 ),
+		show toolbars( 0 ), 
+	
+		V List Box(
+			H Center Box( progress:title = Text Box( "" ) ),
+			Spacer Box( size( 20, 20 ) ),
+			H List Box(
+				Spacer Box( size( 20, 20 ) ),
+				progress:busy = Busy Light( <<size( 60, 60 ), <<Automatic( 1 ) ),
+				Border Box( Left( 20 ), Right( 20 ), top( 20 ), bottom( 20 ),
+					H List Box(
+						progress:left = Spacer Box( color( RGB Color( 20, 200, 20 ) ) ),
+						progress:right = Spacer Box( color( RGB Color( 100, 100, 100 ) ) ),
+						Spacer Box( size( 20, 10 ) ),
+						progress:text = Text Box( "0" )
+					)
+				)
+			)
+		)
+	);
+	
+	ProgressWindow = progress:Window << Get Window Size();
+	XPos = (WindowSize[1] - ProgressWindow[1]) / 2;
+	YPos = (WindowSize[2] - ProgressWindow[2]) / 2;
+	progress:Window << move window( XPos, YPos );
+	
+	progress:set( 0, "" );
+);
+ 
+progress:set = Function( {workdone, title},
+	{now = Tick Seconds(), pct = Round( 100 * workdone / progress:TotalWork )},
+	If( now - progress:tick > 1 / 30,
+		progress:tick = now;
+		If( pct != progress:Current,
+			progress:Current = pct;
+			progress:left << size( progress:Current, 20 );
+			progress:right << size( 100 - progress:Current, 20 );
+			progress:text << settext( Char( pct ) || "%" );
+			progress:title << settext( Char( title ) );
+		);
+		Wait( 0 );
+	)
+);
+
+
+progress:term = Function( {},
+	progress:Window << closeWindow
+);

@@ -1,0 +1,270 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Preview
+ * Version         : 2.0
+ *
+ * Description:
+ * This script run the preview once the button "Preview" is pressed on in the user interface.
+ *
+ * For more information, refer to the function documentation within this script.
+ ************************************************************/
+ 
+/***********************************************************
+ *                SCRIPT TABLE OF CONTENTS
+ ************************************************************/
+
+/****************************************************
+ *  I. USER INTERFACE
+ *  II. SETTINGS 
+ *  III. PREVIEW
+ *  IV. ADD FILTER
+ ****************************************************/
+
+
+EXPR_PREVIEW = Expr(
+
+
+/****************************************************
+*  I. USER INTERFACE
+******************************************************/
+
+	/* 1.1  Tag  */
+	
+	// Parameter for log
+	section = "PREVIEW";
+	
+	// Get the value of the tag to preview
+	Try( TagName_UnitDesc = (lstbox_SelectedTags2 << GetSelected())[1], f_DialogError( "No tag selected" ) );
+	
+	TagName = f_Remove_UnitDescription( TagName_UnitDesc, TagSelect_AA );
+	
+	f_Log( "INFO", "User asks preview for the tag " || TagName_UnitDesc, section );
+	
+	
+	/* 1.2 Get Tag type */
+	
+	// Preview can't be done on R Type tags (PI)/Analog Type tags (IP21)  because there are continuous
+	If( Or( Contains( TagName_UnitDesc, "{R}" ), Contains( TagName_UnitDesc, "{Analog}" ) ),
+		f_DialogError( "Invalid tag type" )
+	);
+	
+	
+	If( !(TagType_AA << Contains Item( TagName_UnitDesc )), 
+		strTagType = f_SQL_GET_TAGTYPE( TagName, ServerType );
+		TagType_AA[TagName_UnitDesc] = strTagType;
+	, 
+		strTagType = TagType_AA[TagName_UnitDesc] 
+	);
+	
+	f_Log( "INFO", "The tag to preview is of the type " || Char( strTagType ), section );
+	
+	If( !(Contains( PreviewTags, strTagType )),
+		f_DialogError( "Invalid tagtype for preview" )
+	);
+
+
+	
+	PreviewWindow = New Window( "Preview",
+	Show Menu( 0 ),
+		show toolbars( 0 ), 
+		outprev = Outline Box( "Preview",
+			V List Box(
+				Border Box( top( 10 ), Left( 10 ),
+					V List Box(
+						Spacer Box( Size( 10, 10 ) ),
+						Text Box( Char( TagName_UnitDesc ), <<SetFontSize( 9 ) ),
+						Spacer Box( size( 10, 10 ) ),
+						Lineup Box( N Col( 2 ), Text Box( "Please select ", <<Set Font Style( "Bold" ) ), txtbox_nbPreview = Text Box( " " ) )
+
+					)
+				),
+				H List Box(
+					V Center Box(
+						Lineup Box( N Col( 1 ), Spacing( 5 ),
+							bttn_OKPreview = Button Box( "Add", Eval( EXPR_PREVIEW_ADD ) ),
+							bttn_CancelPreview = Button Box( "Cancel", PreviewWindow << close window() )
+						)
+					),
+					Border Box( top( 10 ), Left( 10 ), bottom( 10 ), Right( 10 ), lst_DistinctValues = List Box( {}, <<Set Size( 290, 272 ) ) ),
+					V Center Box(
+						bttn_Sort = Button Box( "Sort",
+							values = lst_DistinctValues << Get Items();
+							Sort List Into( values );
+							lst_DistinctValues << Remove All;
+							lst_DistinctValues << Append( values );
+						)
+					)
+				)
+				
+			)
+		)
+	
+	);
+
+
+	// Center the Preview Window
+	PreviewSize = PreviewWindow << Get Window Size();
+	XPos = (WindowSize[1] - PreviewSize[1]) / 2;
+	YPos = (WindowSize[2] - PreviewSize[2]) / 2;
+	PreviewWindow << move window( XPos, YPos );
+
+	
+/****************************************************
+*  II. SETTINGS
+******************************************************/
+
+	
+	/* 2.1 Server information */
+	
+	is_checked = chkbox_edit_adress << Get();
+	MES = txtbox_ServerAddress << Get Text;
+	ServerExtension = txtbox_ServerExtension << Get Text;
+	ShortName = txtbox_Shortname << Get text;
+	ServerType = rdbox_ServerType << Get Selected;
+	TableName = txt_TableName << Get text;
+	Condition = Match( cb_filter_condition << Get(), 1, "AND", 2, "OR" );
+	
+	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
+	
+	If( is_checked == 1,
+		NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+	);
+	
+	/* 2.2 Extraction information */
+	
+	ExtractionMethod = rdbox_Method << Get Selected();
+	PeriodNumValue = PeriodValue << Get();
+	PeriodUnits = rdbox_PeriodUnits << Get Selected();
+	NewPeriodNumValue = f_SetPeriodFormat( PeriodNumValue, PeriodUnits );
+	Start = StartTime << Get();
+	End = EndTime << Get();
+
+	// Estimation of number of rows to be extracted per tag	
+	If( ExtractionMethod == "Actual",
+		NewPeriodNumValue_s = 30,  //s (common freq., some tags can go to 5 seconds)
+		NewPeriodNumValue_s = NewPeriodNumValue / 10
+	); 
+	
+		
+	// Warn the user if there is too many distinct values to display
+	n_estimated_rows = (End - Start) / NewPeriodNumValue_s;
+	f_Log( "INFO", "Potential rows per tag - " || Char( n_estimated_rows ), section );
+	If( n_estimated_rows > NRow_limit_preview, 
+		
+		win = New Window( "Warning",
+			<<Modal,
+			V List Box(
+				Text Box( "There is " || Char( n_estimated_rows ) || " potential rows per tag. Press OK if you want to continue." ),
+				Spacer Box( 15, 15 ),
+				H List Box( Border Box( Left( 80 ), Lineup Box( N Col( 2 ), Button Box( "OK" ), Button Box( "Cancel", Throw() ) ) ) )
+			)
+		);
+		
+		// Stop preview if the user clicks on "Cancel" button
+		If( win["button"] == -1,
+			PreviewWindow << Close Window();
+			Throw();
+		);	
+				
+	);
+	
+	f_SetUp4Extraction( ServerType );
+	
+	End = f_CheckDates( Start, End, NewPeriodNumValue_s, "None", ServerType );
+	
+	{StartFormat, EndFormat} = f_FormatDates( Start, End, 0 );
+	f_Log( "INFO", "Start date UTC (yyyy-mm-ddThh:mm:ss) - " || StartFormat, section );
+	f_Log( "INFO", "End date UTC (yyyy-mm-ddThh:mm:ss) - " || EndFormat, section );
+	
+		
+	/* 2.3 Filters */
+	
+	lstFilters = f_Convert2ListFilters( Filters_AA, Condition );
+	If( N Items( lstFilters ) > 0,
+		f_Log( "INFO", Char( N Items( lstFilters ) ) || " filters registered - " || Concat Items( lstFilters, " " ), section ),
+		f_Log( "INFO", "No filters registered.", section )
+	);
+
+	__SQL_FILTERS = f_SQL_CREATE_ALL_FILTERS( StartFormat, EndFormat, Filters_AA, Condition, ServerType );
+	
+
+/****************************************************
+*  III. PREVIEW
+******************************************************/
+	
+
+	/* 3.2 Preview result */
+	
+	dt_Preview = f_SQL_PREVIEW( TagName, StartFormat, EndFormat, __SQL_FILTERS, ServerType );
+	
+	// Get the values of preview tag to display them in the user interface 
+	Try(lst_ValuePreview = Column( dt_Preview, "VALUE" ) << get values(),
+		Try( Close( dt_Preview, NoSave ) );
+		f_DialogError( "No results" )
+	);
+	If( !(Is List( lst_ValuePreview )), 
+		// Convert in list of character values
+		f_Log( "WARNING", "The values were in a numeric format. Converting them to character.", section );
+		lst_ValuePreview = As List( lst_ValuePreview );
+		For Each( {value, index}, lst_ValuePreview, lst_ValuePreview[index] = Char( value ) );
+	);
+	
+	f_Log( "INFO", "There is " || Char( N Items( lst_ValuePreview ) ) || " distinct values.", section );
+
+		// Add them to preview UI
+	lst_DistinctValues << Append( lst_ValuePreview );
+		// Update the count of distinct values in preview UI
+	txtbox_nbPreview << Set Text( " [ " || Char( N Items( lst_ValuePreview ) ) || " ]" );
+	
+
+	
+
+	Close( dt_Preview, nosave );
+		
+	
+); // END EXPR_PREVIEW
+
+/****************************************************
+*  IV. ADD FILTER
+******************************************************/
+
+EXPR_PREVIEW_ADD = Expr(
+		
+	/* 4.1 Get filter value */
+	
+	Try( lstValues = lst_DistinctValues << Get Selected(), f_DialogError( "No filter selected" ) );
+	
+	f_Log( "INFO", "The user adds as filter values - " || Concat Items( lstValues, "  " ), "FILTER" );
+	
+	For( i = 1, i <= N Items( lstValues ), i++,
+		If( Is Missing( Num( lstValues[i] ) ),
+			lstValues[i] = "'" || lstValues[i] || "'"
+		)
+	);
+
+	ConcatLstValues = Concat Items( lstValues, "," );
+	str_FilterConcat = TagName_UnitDesc || " In " || ConcatLstValues;
+
+	/* 4.2 Check filter value */
+	
+	lst_Filters = lstFiltersRegistered << Get Items();
+	If( Contains( lst_Filters, str_FilterConcat ),
+		f_DialogError( "Filter already exist" )
+	);
+			
+	/* 4.3 Add filter value */
+	
+	// [KEY: ID, correspond to the order of appearance in the list of filters] [VALUE: 1- Tagname with unit/descr (str) / 2- Tag Type (str) / 3- Filters (list)]
+	Eval( Eval Expr( Filters_AA[NextID] = {Expr( TagName_UnitDesc ), Expr( strTagType ), {"In", Expr( ConcatLstValues )}} ) );
+	NextID = N Items( Filters_AA ) + 1; //increment uniqueID
+	
+	
+	// Add the concatenated filter to the list of registered filters
+	lstFiltersRegistered << Append( str_FilterConcat );
+	// Open the outline box with registered filters
+	outline_FiltersRegistered << Close( 0 );
+
+	PreviewWindow << close window();
+		
+); // END EXPR_PREVIEW_ADD
