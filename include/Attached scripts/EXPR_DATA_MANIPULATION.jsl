@@ -1,0 +1,1213 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Data Manipulation
+ *
+ * Description:
+ * This script contains the additional scripts for data manipulation.
+ *
+ ************************************************************/
+
+/***********************************************************
+ *                SCRIPT TABLE OF CONTENTS
+ ************************************************************/
+
+/****************************************************
+ *  I. SETTINGS
+ *  II. USER INTERFACE 
+ ****************************************************/
+
+
+
+EXPR_DATA_MANIP = Expr(
+
+
+
+/****************************************************
+*  I. SETTINGS
+******************************************************/
+
+
+/* 1.1. Settings from initial data extraction */
+
+	section = "ADDITIONAL TOOLS";
+	dt = Current Data Table();
+	strTableVisibility = Expr( strTableVisibility );
+	strPath = Expr( strPath );
+	str.pathTbl = Get Default Directory();
+	dt << Maximize Window( 1 );
+	WindowSize = dt << Get Window Size();
+
+
+/* 1.2. Source JSL dependencies */
+
+	If( !(Directory Exists( strPath )),
+		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval)" );
+		If( Is Missing( strPath ),
+			New Window( "Error",
+				<<modal,
+				<<OnOpen( Window( "Error" ) << moveWindow( 800, 400 ) ),
+				<<Set Window Icon( "ErrorSmall" ),
+				V List Box(
+					H Center Box( Text Box( "ERROR", <<Set Font Size( 11 ), <<Set Font Style( "Bold" ) ) ),
+					Border Box( Top( 15 ), Left( 15 ), Right( 15 ), Text Box( "Please install the add-in MES Data Retrieval" ) ),
+					Border Box( Top( 15 ), Left( 100 ), Button Box( "OK" ) )
+				)
+			);
+			Throw();
+		);
+	);
+
+	// Config file
+	Include( strPath || "config/config.jsl" );
+
+	// Source dependencies files needed
+	lstDependencies = Files In Directory( strPath || "include/", "recursive" );
+	For( i = 1, i <= N Items( lstDependencies ), i++,
+		Include( strPath || "include/" || lstDependencies[i] )
+	);
+	
+
+/* 1.3. Tags */
+
+
+	colNames = dt << Get Column Names( "String" );
+	
+		
+	// Update TagSelect_AA
+	TagSelect_AA = Associative Array();
+	TagType_AA = Associative Array();
+	ColTS = Associative Array();
+	lstContinuousTags = List();
+
+	
+	
+	For( i = 1, i <= N Items( colNames ), i++,
+		colName = colNames[i];
+		// Get the real tagname
+		tagname = Column( dt, colName ) << Get Property( "tagname" );
+		// Get the  tagname with unit and description
+		tagname_desc_unit = Column( dt, colName ) << Get Property( "tagname_desc_unit" );
+		tagtype = Column( dt, colName ) << Get Property( "tagtype" );
+		addin_col_name = Column( dt, colName ) << Get Property( "addin_colname" );
+		
+		// Empty if TS/TS_UTC columns
+		If( tagname != Empty(),
+			TagSelect_AA[tagname_desc_unit] = tagname;
+			If( (Column( dt, colName ) << Get Modeling Type()) == "Continuous",
+				Insert Into( lstContinuousTags, colName )
+			);
+		);
+		If( tagtype != Empty(),
+			TagType_AA[tagname_desc_unit] = tagtype
+		);
+		
+		If( addin_col_name == "TS",
+			ColTS["TS"] = colName
+		);
+		
+		If( addin_col_name == "TS_UTC",
+			ColTS["TS_UTC"] = colName
+		);
+	);
+
+	
+/* 1.4. Decimals */
+	
+	lst.Decimals = List();
+	
+	Try(
+		For Each( {str.ColName, index}, lstContinuousTags, 
+		
+			lst.ColValues = Column( dt, str.ColName ) << get values;
+			int.NbMaxDecimals = Num( f_FindMaxDecimalsNumber( lst.ColValues ) );
+			If( int.NbMaxDecimals != -1,
+				Insert Into( lst.Decimals, int.NbMaxDecimals ),
+				Insert Into( lst.Decimals, Num( "." ) )
+			);
+		)
+		
+	);
+
+/* 1.5. Spec /Control limits */
+
+	lstUCL = List();
+	lstUSL = List();
+	lstLCL = List();
+	lstLSL = List();
+	
+	For Each( {strColName, index}, lstContinuousTags, 
+		
+		{LCL, UCL} = f_Get_ControLimits( dt, strColName );
+		{LSL, USL} = f_Get_SpecLimits( dt, strColName );
+		
+		Insert Into( lstUCL, UCL );
+		Insert Into( lstUSL, USL );
+		Insert Into( lstLCL, LCL );
+		Insert Into( lstLSL, LSL );
+
+		
+	);
+		
+/****************************************************
+*  II. USER INTERFACE
+******************************************************/
+
+	Description = {"Option to add a general comment", "Add comments to specific data points", "Creates a new column with replicated entries removed",
+	"Creates a new column with concatenated entries", "Categorize data by color", "Hide and/or exclude specific data points",
+	"Adjust number of decimal places", "Summary table of applied limits", "Control chart Levey Jennings", "Removal of missing entries"};
+
+	
+	WinDataManip = New Window( "Additional tools",
+		Show Menu( 0 ),
+		show toolbars( 0 ), 
+		
+		
+		V List Box(
+			align( center ),
+			Border Box( Sides( 4 ), Top( 20 ),
+				th = Text Box(
+					"Additional tools",
+					<<SetFontSize( 20 ),
+					<<Set Font( "Century Gothic" ),
+					<<Set Font Style( "Bold" ),
+					<<set auto centering( 1, 0 ),
+					<<set auto stretching( 1, 0 ),
+					<<Set width( 202 )
+				
+				)
+			),
+			Spacer Box( size( 20, 20 ), <<set max size( 100000, 30 ), <<set auto stretching( 1, 1 ) ),
+			Lineup Box( N Col( 3 ), spacing( 30 ),
+				H List Box(
+					Icon Box( "WinInformation" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.file_info = Button Box( "File info",  
+
+							WinInfo = New Window( "File info",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								Spacer Box( size( 15, 15 ) ),
+								Outline Box( "File info",
+									Spacer Box( size( 15, 15 ) ),
+									Lineup Box( N Col( 2 ), spacing( 10 ), 
+									
+										Panel Box( "Enter the file information",
+											Border Box( Top( 2 ),
+												txt.file_info = Text Edit Box( Trim( dt << Get Table Variable( "File info" ) ),
+													<<Set Width( 600 ),
+													<<Set Wrap( 600 )
+												)
+											)
+										),
+										Lineup Box( N Col( 1 ), spacing( 10 ),
+											Button Box( "Ok", 
+					
+												f_Log( "INFO", "START File info", section );
+						
+												// Text
+												strFileInfo = txt.file_info << Get Text();
+												If( Trim( strFileInfo ) == "",
+													f_DialogError( "Empty value" )
+												);
+												dt << Set Table Variable( "File info", Char( strFileInfo ) );
+						
+												f_Log( "INFO", "New file info - '" || Char( strFileInfo ) || "'", section );
+						
+												f_Log( "INFO", "END File info", section );
+												
+												WinInfo << Close Window();
+											),
+											Button Box( "Cancel", WinInfo << Close Window() )
+										
+										)
+									)
+								)
+							);
+							
+							// Center window
+							f_CenterWindow( WinInfo, WindowSize );
+						),
+						Text Box( Description[1], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "WinToolsLasso" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.annotate_data = Button Box( "Annotate data",
+							WinAnnotate = New Window( "Annotate data",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								<<Set Window Icon( "WinToolsLasso" ),
+								Spacer Box( size( 10, 10 ) ),
+								Outline Box( "Annotate data",
+									Spacer Box( size( 10, 10 ) ),
+									V List Box(
+										Lineup Box( N Col( 1 ), spacing( 10 ),
+											Text Box( "1.  Select column" ),
+											Current Data Table( dt );
+											collistbox.annotate_data = Col List Box(
+												all,
+												width( 600 ),
+												nlines( 10 ),
+												MaxSelected( 1 ),
+												<<Modeling Type( {"Nominal", "Ordinal", "Multiple Response"} ), 
+							
+												Try(
+													ColAnnotate = (collistbox.annotate_data << Get selected())[1];
+													Eval(
+														Eval Expr(
+															dtColSummary = dt << Summary(
+																Group( Expr( Expr( ColAnnotate ) ) ),
+																Freq( "None" ),
+																Weight( "None" ),
+																"Invisible"
+															)
+														)
+													);
+													Eval(
+														Eval Expr(
+															lstValue_ColAnnotate = Column( dtColSummary, Expr( Expr( ColAnnotate ) ) ) << Get Values
+														)
+													);
+													Close( dtColSummary, NoSave );
+													ColBx_ValAnnotate << Remove All();
+													ColBx_ValAnnotate << Append( lstValue_ColAnnotate );
+													
+							
+												)
+											);,
+											Text Box( "2.  Select value(s)" ),
+											Lineup Box( N Col( 3 ),
+												Border Box( Top( 2 ), Icon Box( "SearchIndex" ) ),
+												Border Box( Top( 2 ),
+													txt_SearchBarValue = Text Edit Box( "",
+														<<set width( 605 ),
+														<<set text changed( f_SearchBarValue )
+													)
+												),
+												bttn_ResetSearchValue = Button Box( "",
+													<<set icon( "DebuggerDeleteBreakpoint" ),
+													<<set script(
+														txt_SearchBarValue << set text( "" );
+														f_SearchBarValue( txt_SearchBarValue, "" );
+													),
+													<<set tip( "Clear filter" )
+												)
+													
+											),
+											Border Box( Left( 25 ), ColBx_ValAnnotate = List Box( {}, width( 600 ), nlines( 10 ) ) ), 
+											
+											Text Box( "3.  Annotate" ),
+											Lineup Box( N Col( 1 ), spacing( 10 ),
+												txt.annotate_data = Text Edit Box( "", <<Set Width( 650 ), <<Set Wrap( 650 ) ),
+												rdbox.annotate_data = Radio Box( {"First point", "All points"} ),
+												Lineup Box( N Col( 2 ), spacing( 10 ),
+													Text Box( "If multiple comments:" ),
+													rdbox.comment_method = Radio Box( {"Add", "Replace"} )
+												)
+											)
+											
+											
+										),
+										H Center Box(
+											Lineup Box( N Col( 2 ), spacing( 10 ),
+												Button Box( "Ok", 
+						
+													f_Log( "INFO", "START Annotate", section );
+						
+											// Column
+													Try(
+														ColAnnotate = (collistbox.annotate_data << Get selected())[1],
+														f_DialogError( "No column selected" )
+													);
+						
+											// Values
+													lstValAnnotate = ColBx_ValAnnotate << Get Selected;
+													If( N Items( lstValAnnotate ) == 0,
+														f_DialogError( "No value(s) selected" )
+													);
+						
+											// Annotation
+													txt2Annotate = txt.annotate_data << Get Text();
+													If( Trim Whitespace( txt2Annotate ) == "",
+														f_DialogError( "Invalid comment" )
+													);
+						
+											// Option
+													OptAnnotate = rdbox.annotate_data << Get Selected();
+													str.OPt_Comment_Method = rdbox.comment_method << Get Selected();
+						
+													f_Log(
+														"INFO",
+														"User adds comment '" || Char( txt2Annotate ) || "' for " || Char( OptAnnotate ) ||
+														" and Column " || Char( ColAnnotate ) || " - Value(s) " ||
+														Concat Items( lstValAnnotate, " / " ), section
+													);
+						
+											// Check comment column
+													ColNames = dt << Get Column Names( "String" );
+													If( Contains( ColNames, "Comment" ),
+														int.colum_comment_exists = 1,
+														int.colum_comment_exists = 0;
+														dt << New Column( "Comment", "Character", "Nominal" );
+													);
+													
+							
+											// Row Selection
+							
+													lstRows = List();
+							
+													For Each( {value, index}, lstValAnnotate,
+														IDRow = As List( Loc( (Column( dt, ColAnnotate ) << get values), value ) );
+														If( OptAnnotate == "First point",
+															IDRow = IDRow[1]
+														);
+														Insert Into( lstRows, IDRow );
+													);
+							
+													f_Log( "INFO", Char( N Items( lstRows ) ) || " rows selected for the annotation", section );
+							
+											// Add comment
+													For Each( {value, index}, lstRows, 
+													
+														If( And( int.colum_comment_exists == 1, str.OPt_Comment_Method == "Add" ),
+															If( Column( dt, "Comment" )[value] != "",
+																Column( dt, "Comment" )[value] = Column( dt, "Comment" )[value] || " , " ||
+																txt2Annotate,
+																Column( dt, "Comment" )[value] = txt2Annotate
+															),
+															Column( dt, "Comment" )[value] = txt2Annotate
+														)
+														
+													);
+						
+													f_Log( "INFO", "END Annotate", section );
+											
+													WinAnnotate << Close window();
+						
+												
+											
+												),
+												Button Box( "Cancel", WinAnnotate << Close window() )
+											)
+										)
+									)
+								)
+							);
+							
+							// Center window
+							f_CenterWindow( WinAnnotate, WindowSize );
+						
+						),
+						Text Box( Description[2], <<set wrap( 130 ) )
+					)
+				), 
+			
+				H List Box(
+					Icon Box( "Tabulate" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.summary_column = Button Box( "Summary column", 
+						
+							winSummary = New Window( "Summary column",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								<<Set Window Icon( "Tabulate" ),
+								Spacer Box( size( 10, 10 ) ),
+								Outline Box( "Summary column",
+									Spacer Box( size( 10, 10 ) ),
+									Lineup Box( N Col( 2 ), spacing( 10 ),
+										Lineup Box( N Col( 1 ), spacing( 10 ),
+											Panel Box( "Select column",
+												collistbox.summary_column = Col List Box(
+													all,
+													width( 600 ),
+													nlines( 10 ),
+													MaxSelected( 1 ),
+													<<Modeling Type( {"Nominal", "Ordinal", "Multiple Response"} )
+												)
+						
+											),
+											chkbox.add_timestamp = Check Box( "Add timestamp", <<Set( 1, 1 ) )
+										),
+										Lineup Box( N Col( 2 ), spacing( 10 ),
+											Button Box( "Ok", 
+					
+												f_Log( "INFO", "START Summary Column", section );
+						
+										// Column
+												Try(
+													ColSummary = (collistbox.summary_column << Get selected())[1],
+													f_DialogError( "No column selected" )
+												);
+						
+												f_Log( "INFO", "User does column summary of '" || Char( ColSummary ), section );
+							
+										// Option
+												OptTS = chkbox.add_timestamp << Get;
+												If( OptTS == 1,
+													f_Log( "INFO", "Option 'Add timestamp' enabled", section );
+													Try( ColNameTS_UTC = ColTS["TS_UTC"], f_DialogError( "Timestamp missing" ) );
+													f_Log( "INFO", "Timestamp column UTC found - " || Char( ColNameTS_UTC ), section );
+													Column( dt, ColNameTS_UTC ) << data type( numeric ) << modeling type( continuous ) <<
+													Format( "yyyy-mm-ddThh:mm:ss" );
+												,
+													f_Log( "INFO", "Option 'Add timestamp' disabled", section )
+												);
+						
+										// Get unique values
+												If( OptTS == 0, 
+							
+													Eval(
+														Eval Expr(
+															dtColSummary = dt << Summary(
+																Group( Expr( Expr( ColSummary ) ) ),
+																Freq( "None" ),
+																Weight( "None" ),
+																"Invisible"
+															)
+														)
+								
+													)
+												, 
+							
+													Try(
+														Eval(
+															Eval Expr(
+																dtColSummary = dt << Summary(
+																	Group( Expr( Expr( ColSummary ) ) ),
+																	Min( Expr( Expr( ColNameTS_UTC ) ) ),
+																	Freq( "None" ),
+																	Weight( "None" ),
+																	statistics column name format( "column" ),
+																	"Invisible"
+																)
+															)
+														),
+														f_DialogError( "Timestamp invalid" )
+									
+													);
+													Eval(
+														Eval Expr(
+															lstTSColSummary = Column( dtColSummary, Expr( Expr( ColNameTS_UTC ) ) ) << Get Values()
+														)
+													);
+							
+												);
+
+												Eval(
+													Eval Expr(
+														lstValColSummary = Column( dtColSummary, Expr( Expr( ColSummary ) ) ) << Get Values()
+													)
+												);
+												Close( dtColSummary, NoSave );
+									
+										// Check columns
+												ColNames = dt << Get Column Names( "String" );
+												NewColName = Char( ColSummary ) || " Summary";
+												NewColTSName = Char( ColSummary ) || " Timestamp";
+												f_Log(
+													"INFO",
+													Char( N Items( lstValColSummary ) ) || " unique values found for summary column",
+													section
+												);
+												f_Log( "INFO", "Summary column name - " || NewColName, section );
+												f_Log( "INFO", "Timestamp column name - " || NewColTSName, section );
+
+						
+												If( Contains( ColNames, NewColName ),
+													f_DialogError( "Column " || NewColName || " already exists" )
+												);
+												If( And( OptTS == 1, Contains( ColNames, NewColTSName ) ),
+													f_DialogError( "Column " || Char( NewColTSName ) || " already exists" )
+												);
+						
+										// Create New Column
+												If( OptTS == 1,
+													dt << New Column( NewColTSName, "Character", "Nominal" )
+												);
+												dt << New Column( NewColName, "Character", "Nominal" );
+						
+												For( i = 1, i <= N Items( lstValColSummary ), i++,
+													Column( dt, NewColName )[i] = lstValColSummary[i];
+													If( OptTS == 1,
+														Column( dt, NewColTSName )[i] = lstTSColSummary[i]
+													);
+												);
+												If( OptTS == 1,
+													Eval(
+														Eval Expr(
+															Column( dt, Expr( Expr( NewColTSName ) ) ) << data type( numeric ) <<
+															modeling type( "continuous" ) << Format( "yyyy-mm-ddThh:mm:ss", 16 )
+														)
+													)
+												);
+						
+												f_Log( "INFO", "END Summary Column", section );
+										
+												winSummary << Close Window();
+											),
+											Button Box( "Cancel", winSummary << Close Window() )
+											
+										)
+									)
+								)
+							);
+							
+							// Center window
+							f_CenterWindow( winSummary, WindowSize );
+						
+						),
+						Text Box( Description[3], <<set wrap( 130 ) )
+						
+					)
+				),
+				H List Box(
+					Icon Box( "MakeValidationColumn" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.consolidate_information = Button Box( "Consolidate information",
+							WinConsolidate = New Window( "Consolidate information",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								<<Set Window Icon( "MakeValidationColumn" ),
+								Spacer Box( size( 10, 10 ) ),
+								Outline Box( "Consolidate information",
+									Lineup Box( N Col( 3 ), spacing( 10 ),
+										Panel Box( "Select columns to combine",
+											collistbox.consolidate_information = Col List Box( all, width( 600 ), nlines( 10 ) )
+										),
+										Lineup Box( N Col( 2 ), spacing( 10 ),
+											Text Box( "Column Name" ),
+											txteditbx.new_column_name = Text Edit Box( "", <<set width( 200 ) ),
+											Text Box( "Delimiter" ),
+											txteditbx.delimiter = Text Edit Box( "", <<set width( 200 ) ),
+											chkbx.multiple_response = Check Box( "Multiple Response" )
+
+										),
+										Lineup Box( N Col( 1 ), spacing( 10 ),
+											Button Box( "Combine", 
+					
+												f_Log( "INFO", "START Consolidate information", section );
+											
+												Cols2Combine = collistbox.consolidate_information << Get selected();
+												str.new_column_name = txteditbx.new_column_name << Get text();
+												str.delimiter = txteditbx.delimiter << Get text();
+												int.OptMultiple_response = chkbx.multiple_response << Get();
+					
+										// Columns
+											
+												If( N Items( Cols2Combine ) < 2,
+													f_DialogError( "No columns selected" )
+												);
+						
+												f_Log(
+													"INFO",
+													"Users wants to combine " || Char( N Items( Cols2Combine ) ) || " columns : " ||
+													Concat Items( Cols2Combine, " / " ), section
+												);
+					
+										// Combine
+												lst.column_names = dt << Get column names( "string" );
+												If( Trim( str.new_column_name ) == "",
+													f_DialogError( "Invalid new column name" )
+												);
+												If( Contains( lst.column_names, str.new_column_name ),
+													f_DialogError( "Column already exists" )
+												);
+											
+												Eval(
+													Eval Expr(
+														dt << Combine Columns(
+															delimiter( Expr( Expr( Expr( str.delimiter ) ) ) ),
+															Columns( Expr( Expr( Expr( Cols2Combine ) ) ) ),
+															Multiple Response( Expr( Expr( Expr( int.OptMultiple_response ) ) ) ),
+															Column Name( Expr( Expr( Expr( (str.new_column_name) ) ) ) )
+														)
+													)
+												);
+											
+											// Put new column at the end
+												
+												str.last_column = lst.column_names[N Items( lst.column_names )];
+												Eval(
+													Eval Expr(
+														dt << Move Selected Columns(
+															{Expr( Expr( Expr( str.new_column_name ) ) )},
+															after( Expr( Expr( Expr( str.last_column ) ) ) )
+														)
+													)
+												);
+					
+												f_Log( "INFO", "END Consolidate information", section );
+												WinConsolidate << Close Window();
+				
+											),
+											Button Box( "Cancel", WinConsolidate << Close Window() )
+										)
+									)
+									
+								)
+							);
+							
+								// Center window
+							f_CenterWindow( WinConsolidate, WindowSize );
+						),
+						Text Box( Description[4], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "Chart" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.color_coding = Button Box( "Color coding", dt << Color or Mark by Column() ),
+						Text Box( Description[5], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "ReliabilityRBDOmitted" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.hide_exclude = Button Box( "Hide & exclude",
+							WinHideExclude = New Window( "Hide & exluce",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								Spacer Box( size( 10, 10 ) ),
+								Outline Box( "Select rows to hide & exclude",
+									Spacer Box( size( 10, 10 ) ),
+									txt.hide_exclude_nrows = Text Box( "Number of rows selected: " || Char( N Items( dt << get selected rows ) ) ),
+									Spacer Box( size( 10, 10 ) ),
+									Text Box( "Method: " ),
+									Spacer Box( size( 10, 10 ) ),
+									Lineup Box( N Col( 2 ), spacing( 15 ),
+										rdbox.hide_exclude = Radio Box( {"Hide", "Exlude", "Hide AND exclude"} ),
+										Panel Box( "Actions", 
+										
+											Button Box( "Open row selection JMP Platform", dt << Select where() ),
+											Spacer Box( size( 5, 5 ) ),
+											H Center Box(
+												Button Box( "Update",
+													txt.hide_exclude_nrows << Set text(
+														"Number of rows selected: " || Char( N Items( dt << get selected rows ) )
+													)
+												)
+											),
+											Spacer Box( size( 5, 5 ) ),
+											H Center Box(
+												Button Box( "Ok", 
+						
+													f_Log( "INFO", "START Hide/Exclude", section );
+						
+												// Option
+													OptHideExclude = rdbox.hide_exclude << Get Selected();
+													f_Log( "INFO", "Option selected - " || Char( OptHideExclude ), section );
+													lstRows2HideExclude = dt << Get Selected Rows();
+													f_Log( "INFO", "Number of rows selected - " || Char( N Items( lstRows2HideExclude ) ), section );
+													txt.hide_exclude_nrows << Set text(
+														"Number of rows selected: " || Char( N Items( lstRows2HideExclude ) )
+													);
+												
+													If( N Items( lstRows2HideExclude ) == 0,
+														f_DialogWarning( "No rows selected" )
+													);
+						
+												// Hide/Exclude
+													If( OptHideExclude == "Hide",
+														dt << Select Rows( lstRows2HideExclude ) << Hide,
+														If( OptHideExclude == "Exlude",
+															dt << Select Rows( lstRows2HideExclude ) << Exclude,
+															dt << Select Rows( lstRows2HideExclude ) << Hide and Exclude
+														)
+													);
+						
+													f_Log( "INFO", "END Hide/Exclude", section );
+													WinHideExclude << Close Window();
+												)
+											),
+											Spacer Box( size( 10, 10 ) ),
+											H Center Box( Button Box( "Cancel", WinHideExclude << Close Window() ) )
+										)
+									)
+								)
+							);
+							
+								// Center window
+							f_CenterWindow( WinHideExclude, WindowSize );
+					
+						
+						),
+						Text Box( Description[6], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "XmlNodeForColumnNumeric" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.decimal_places = Button Box( "Decimal places", outline.decimal_places << Visibility( "Visible" ) ),
+						Text Box( Description[7], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "TimeSeries" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.limit_table = Button Box( "Limit table", outline.limit_table << Visibility( "Visible" ) ),
+						Text Box( Description[8], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "AttributeChart" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.control_chart = Button Box( "Control chart", outline.control_chart << Visibility( "Visible" ) ),
+						Text Box( Description[9], <<set wrap( 130 ) )
+					)
+				),
+				H List Box(
+					Icon Box( "QuestionMark" ),
+					V List Box(
+						Spacer Box( size( 10, 20 ) ),
+						button.remove_empty_entries = Button Box( "Clean up", 
+							
+							window.remove_na = New Window( "Clean up",
+								Show Menu( 0 ),
+								show toolbars( 0 ),
+								<<Set Window Icon( "QuestionMark" ),
+								Spacer Box( size( 10, 10 ) ),
+								Outline Box( "Removal of empty entries",
+									Lineup Box( N Col( 3 ), spacing( 10 ),
+										Panel Box( "Select the column where you want to remove empty entries",
+											collistbox.remove_na = Col List Box( all, width( 600 ), nlines( 10 ), maxselected( 1 ) )
+										),
+										Lineup Box( N Col( 1 ), spacing( 10 ),
+											Button Box( "Ok", 
+					
+												f_Log( "INFO", "START Consolidate information", section );
+											
+												/* Get column names where we remove empty entries */
+												lst.cols = collistbox.remove_na << Get selected();
+																
+												If( N Items( lst.cols ) == 0,
+													f_DialogError( "No column selected" )
+												);
+												
+												str.col = lst.cols[1];
+						
+												f_Log( "INFO", "Users remove empty entrie in column: " || Char( str.col ), section );
+												
+												
+												dt << Clear Select();
+												Eval(
+													Eval Expr(
+														lst.Rows2Remove = dt << Get rows where(
+															Is Missing( Expr( Expr( Expr( Parse( ":Name(\!"" || Char( str.col ) || "\!")" ) ) ) ) )
+														)
+													)
+												);
+												int.NRows2Remove = N Items( lst.Rows2Remove );
+												Eval( Eval Expr( dt << Delete Rows( Expr( Expr( Expr( lst.Rows2Remove ) ) ) ) ) );
+												f_DialogInfo( Eval Insert( "^int.NRows2Remove^ row(s) were removed in column ^str.col^." ) );
+
+											
+												f_Log( "INFO", "END Remove empty entries", section );
+												window.remove_na << Close Window();
+				
+											),
+											Button Box( "Cancel", window.remove_na << Close Window() )
+										)
+									)
+									
+								)
+							);
+							
+								// Center window
+							f_CenterWindow( window.remove_na, WindowSize );
+						),
+						Text Box( Description[10], <<set wrap( 130 ) )
+					)
+				)
+			)
+			
+		
+		),
+		Spacer Box( size( 15, 15 ), <<set max size( 100000, 15 ), <<set auto stretching( 1, 1 ) ),
+		outline.decimal_places = Outline Box( "Decimal places",
+			Spacer Box( size( 10, 10 ), <<set max size( 100000, 15 ), <<set auto stretching( 1, 1 ) ),
+			Lineup Box( N Col( 2 ), spacing( 10 ),
+				tblbox.digits = Table Box(
+					stringcolbox.digits_tags = String Col Box( "Column", lstContinuousTags ),
+					stringcolbox.digits_values = Number Col Edit Box( "Digits", lst.Decimals )
+				),
+				Button Box( "Ok",
+					f_Log( "INFO", "START Decimal places", section );
+						
+						// New Decimals
+					lstNewDigits = stringcolbox.digits_values << Get;
+						
+						
+						//  Apply new decimals
+					For( i = 1, i <= N Items( lstContinuousTags ), i++,
+						If( And( lst.Decimals[i] != lstNewDigits[i], lstNewDigits[i] >= 0 ),
+							f_Log(
+								"INFO",
+								Char( lstContinuousTags[i] ) || " Old decimales places - " || Char( lst.Decimals[i] ) || " / New decimales place - "
+								 || Char( lstNewDigits[i] ),
+								section
+							);
+							Column( dt, lstContinuousTags[i] ) << Data Type( Numeric, Format( "Fixed Dec", 12, lstNewDigits[i] ) );
+						,
+							f_Log( "INFO", Char( lstContinuousTags[i] ) || "  decimales places unchanged", section )
+
+						)
+					);
+										
+					f_Log( "INFO", "END Decimal places", section );
+					
+				)
+			)
+		),
+		Spacer Box( size( 15, 15 ) ),
+		outline.limit_table = Outline Box( "Limit table", 
+				
+			Spacer Box( size( 10, 10 ), <<set max size( 100000, 15 ), <<set auto stretching( 1, 1 ) ),
+			Lineup Box( N Col( 2 ), spacing( 10 ),
+				Lineup Box( N Col( 1 ), spacing( 10 ),
+					tblbox.limits = Table Box(
+						stringcolbox.limits_tags = String Col Box( "Column", lstContinuousTags ), 
+					
+						nbcoleditbox.limits_LSL = Number Col Edit Box( "LSL", lstLSL ),
+						nbcoleditbox.limits_LCL = Number Col Edit Box( "LCL", lstLCL ),
+						nbcoleditbox.limits_UCL = Number Col Edit Box( "UCL", lstUCL ),
+						nbcoleditbox.limits_USL = Number Col Edit Box( "USL", lstUSL )
+					),
+					txt.limits_history = Text Box( "History of changes:\!n" )
+
+				),
+				Lineup Box( N Col( 1 ), spacing( 10 ),
+					button.limits_levey_jennings = Button Box( "Do Levey-Jennings", 
+						
+							// Rows selected
+						lstSelectRows = tblbox.limits << get Selected Rows();
+						If( N Items( lstSelectRows ) == 0,
+							f_DialogError( "No tag(s) in the limit table selected" )
+						);
+							
+							// Control limits
+						lstNewLCL = nbcoleditbox.limits_LCL << Get();
+						lstNewUCL = nbcoleditbox.limits_UCL << Get();
+							
+							
+							
+							// Levey-Jennings
+						For Each( {IDRow, index}, lstSelectRows, 
+							
+								// IDRow= 1
+							strColName = lstContinuousTags[IDRow];
+							{LCL, UCL} = f_Get_LeveyJennings( dt, strColName );
+							strLog = "Levey-Jennings - " || Char( strColName ) || " / LCL: " || Char( LCL ) || "/ UCL: " || Char( UCL );
+							f_Log( "INFO", strLog, section );
+								
+							lstNewLCL[IDRow] = LCL;
+							lstNewUCL[IDRow] = UCL;
+								
+								// Log
+							strHistory = txt.limits_history << Get text;
+							txt.limits_history << Set text( strHistory || "\!n" || strLog );
+						);
+							
+							// Update control limits
+						nbcoleditbox.limits_LCL << Set( lstNewLCL );
+						nbcoleditbox.limits_UCL << Set( lstNewUCL );
+							
+							// Color rows
+						tblbox.limits << Set Selected Row Color( "Orange" );
+						
+					),
+					button.ExportLimits = Button Box( "Export limits to data table", 
+					
+						/* Get current calculated limit table */
+						tbl.LimitsCalculated = tblbox.limits[Table Box( 1 )] << Make Into Data Table( "invisible" );
+						/* Remove attached scripts generated by JMP, such as 'source' */
+						script_names = tbl.LimitsCalculated << get table script names;
+						tbl.LimitsCalculated << delete scripts( script_names );
+						
+						
+						
+						/* Get path where we saved calculated limit table */
+						str.PathCalculatedLimits = Pick File(
+							"Save report",
+							str.pathTbl,
+							{"JMP Files|jmp", "All Files|*"},
+							1,
+							1,
+							"CALCULATED LIMITS.jmp"
+						);
+						str.CalcLimitsName = Word( -1, str.PathCalculatedLimits, "/" );
+						str.CalcLimitsName = Left( str.CalcLimitsName, Contains( str.CalcLimitsName, "." ) - 1 );
+												
+						str.Path2SaveTemplate = Substitute( str.PathCalculatedLimits, ".jmp", "", ".JMP", "" );
+
+						
+						If( File Exists( str.PathCalculatedLimits ),
+							window.LimitCalculatedExists = New Window( "Warning",
+								<<modal,
+								<<Set Window Icon( "Warning" ),
+								V List Box(
+									H Center Box( Text Box( "WARNING", <<Set Font Size( 11 ), <<Set Font Style( "Bold" ) ) ),
+									Text Box(
+										"Calculated limits table already exists at:\!n\!n" || str.PathCalculatedLimits ||
+										".\!n\!nSelect the saving option to be applied.\!n",
+										<<set width( 600 ),
+										<<set wrap( 600 )
+									),
+									rbx.SavingChoice = Radio Box(
+										{"Overwrite existing calculated limits table with the same name", "Save without overwriting existing file",
+										"Stop saving"},
+										<<set( 2 )
+									),
+									H Center Box(
+										Lineup Box( N Col( 2 ), spacing( 5 ),
+											Button Box( "OK",
+												int.SavingChoice = rbx.SavingChoice << Get;
+												userInput = Match( int.SavingChoice, 1, "Replace", 2, "Save", 3, "Cancel" );
+															
+											), 
+				
+											Button Box( "Cancel", userInput = "Cancel" )
+										)
+									)
+								)
+							);
+						
+							If( window.LimitCalculatedExists["button"] == -1,
+								Try( window.LimitCalculatedExists << Close Window() );
+								userInput = "Cancel";
+								f_Log( "WARNING", "The user closed the window. The calculated limits table will not be saved.", section );
+								Close( tbl.LimitsCalculated, NoSave );
+
+							);
+							Match( userInput,
+								"Replace", 
+           
+									Try( Delete File( str.PathCalculatedLimits ) );
+									f_Log( "WARNING", "The user confirmed the replacement of previous calculated limits table.", section );
+									Close( tbl.LimitsCalculated, Save( str.PathCalculatedLimits ) );
+									f_DialogInfo(
+										Eval Insert( "The calculated limits table was successfully saved at ^str.PathCalculatedLimits^." )
+									)
+
+									;,
+								"Cancel",
+									f_Log(
+										"WARNING", "The user clicked on 'Cancel' button.  The calculated limits table will not be saved.", section
+									);
+									Close( tbl.LimitsCalculated, NoSave );
+
+					
+							,
+								"Save",
+									f_Log(
+										"WARNING",
+										"The user clicked on 'Save without replacing' button. The new calculated limits table will be saved without replacing the old one.",
+										section
+									);
+						
+									int.NumFile = 0;
+									While( File Exists( str.PathCalculatedLimits ),
+										int.NumFile = int.NumFile + 1;
+										str.PathCalculatedLimits = Eval Insert( "^str.Path2SaveTemplate^ (^int.NumFile^).jmp" );
+									);
+									Close( tbl.LimitsCalculated, Save( str.PathCalculatedLimits ) );
+								
+									f_DialogInfo(
+										Eval Insert( "The calculated limits table was successfully saved at ^str.PathCalculatedLimits^." )
+									)
+								
+						
+		
+									;
+							);
+							
+						,
+							Close( tbl.LimitsCalculated, Save( str.PathCalculatedLimits ) );
+								
+							f_DialogInfo( Eval Insert( "The calculated limits table was successfully saved at ^str.PathCalculatedLimits^." ) );
+						);
+				
+						
+					
+					),
+					Button Box( "Ok", 
+						
+						f_Log( "INFO", "START Limit table", section );
+							
+							// New Control/Spec limits
+						lstNewLSL = nbcoleditbox.limits_LSL << Get();
+						lstNewLCL = nbcoleditbox.limits_LCL << Get();
+						lstNewUCL = nbcoleditbox.limits_UCL << Get();
+						lstNewUSL = nbcoleditbox.limits_USL << Get();
+							
+	
+						If(
+							Or(
+								f_AreListsDifferent( lstNewLSL, lstLSL ),
+								f_AreListsDifferent( lstNewLCL, lstLCL ),
+								f_AreListsDifferent( lstNewUCL, lstUCL ),
+								f_AreListsDifferent( lstNewUSL, lstUSL )
+							),
+							winLimits = New Window( "Warning",
+								<<Modal,
+								<<modal,
+								<<Set Window Icon( "Warning" ),
+								V List Box(
+									H Center Box( Text Box( "WARNING", <<Set Font Size( 11 ), <<Set Font Style( "Bold" ) ) ),
+									Border Box( Left( 15 ), Right( 15 ), top( 15 ),
+										Text Box( "Existing limits will be overwritten. Press OK to continue." )
+									),
+									Spacer Box( 15, 15 ),
+									H List Box(
+										Border Box( Left( 80 ), Lineup Box( N Col( 2 ), Button Box( "OK" ), Button Box( "Cancel", Throw() ) ) )
+									)
+								)
+							);
+		
+							If( winLimits["button"] == -1,
+								Throw()
+							);
+						);
+							
+							//  Apply Control/Spec limits
+						For Each( {strColname, index}, lstContinuousTags, 
+								
+							Eval(
+								Eval Expr(
+									Column( dt, strColname ) << Set Property(
+										"Spec Limits",
+										{LSL( Expr( Expr( Expr( lstNewLSL[index] ) ) ) ), USL(
+											Expr(
+												Expr(
+													
+													Expr( lstNewUSL[index] )
+													
+												)
+											)
+										), Show Limits( 1 )}
+									)
+								)
+							);
+							Eval(
+								Eval Expr(
+									Column( dt, strColname ) << Set Property(
+										"Control Limits",
+										{XBar( LCL( Expr( Expr( Expr( lstNewLCL[index] ) ) ) ), UCL( Expr( Expr( Expr( lstNewUCL[index] ) ) ) ) )}
+									)
+								)
+							);
+								
+							f_Log(
+								"INFO",
+								Char( strColName ) || " LCL: " || Char( lstNewLCL[index] ) || "/ UCL: " || Char( lstNewUCL[index] ) || "/ LSL: " ||
+								Char( lstNewLSL[index] ) || "/ USL: " || Char( lstNewUSL[index] ),
+								section
+							);
+								
+						);
+						
+						f_Log( "INFO", "END Limit table", section );
+					)
+						
+				)
+			)
+		),
+		Spacer Box( size( 15, 15 ) ),
+		outline.control_chart = Outline Box( "Control Chart",
+			Spacer Box( size( 10, 10 ), <<set max size( 100000, 15 ), <<set auto stretching( 1, 1 ) ),
+			If( N Items( lstContinuousTags ) > 0,
+				Eval(
+					Eval Expr(
+						ControlChart = dt << Control Chart Builder(
+							Size( 0, 0 ),
+							Show Two Shewhart Charts( 0 ),
+							Show Limit Labels( 1 ),
+							Variables( Y( Expr( Expr( lstContinuousTags[1] ) ) ) ),
+							Chart( Points( Statistic( "Individual" ) ), Limits( Sigma( "Levey Jennings" ) ) ),
+							Show Control Panel( 0 )
+						)
+					)
+			
+				)
+			)
+		)
+	);
+
+	// Maximize window
+	WinDataManip << Maximize Window( 1 );
+	
+	// Underline style button
+	button.file_info << underline style( 1 );
+	button.annotate_data << underline style( 1 );
+	button.consolidate_information << underline style( 1 );
+	button.summary_column << underline style( 1 );
+	button.control_chart << underline style( 1 );
+	button.decimal_places << underline style( 1 );
+	button.limit_table << underline style( 1 );
+	button.hide_exclude << underline style( 1 );
+	button.color_coding << underline style( 1 );
+	button.remove_empty_entries << underline style( 1 );
+
+	// Close all outline box
+	outline.limit_table << Visibility( "Collapse" );
+	outline.decimal_places << Visibility( "Collapse" );
+	outline.control_chart << Visibility( "Collapse" );
+		
+	// Other settings
+	tblbox.digits << Set Scrollable( 10, 0 ); // Max 10 tag displayed
+	tblbox.digits << Set Click Sort( 1 );
+	tblbox.limits << Set Selectable Rows( 1 );
+	tblbox.limits << Set Click Sort( 1 );
+	button.limits_levey_jennings << Enable( 0 );
+	
+	//Enable button box to do Levey jennings if rows selected in limits table
+	tblbox.limits << Set Row Change Function(
+		Function( {this},
+			vec_row_selected = (this << get selected rows);
+			If( N Rows( vec_row_selected ) > 0, 
+			
+				button.limits_levey_jennings << Enable( 1 )
+			,
+				button.limits_levey_jennings << Enable( 0 )
+			);
+		)
+	);
+	
+	// History of cell changes in limits table
+	tblbox.limits << Set Cell Changed Function(
+		Function( {thisBox, col, row}, 
+		
+			tblbox.limits << Set Selected Row Color( 2147483647 );
+			strLog = (col << get heading) || ": Tag:" || Char( lstContinuousTags[row] ) || " is now " || Char( col << get( row ) );
+			f_Log( "INFO", strLog, section );
+			strHistory = txt.limits_history << Get text;
+			txt.limits_history << Set text( strHistory || "\!n" || strLog );
+		)
+	);
+
+	stringcolbox.digits_tags << Set Width( 400 );
+	stringcolbox.limits_tags << Set Width( 400 );
+	nbcoleditbox.limits_LSL << Set Width( 120 );
+	nbcoleditbox.limits_USL << Set Width( 120 );
+	nbcoleditbox.limits_LCL << Set Width( 120 );
+	nbcoleditbox.limits_UCL << Set Width( 120 );
+	txt.limits_history << Set Width( 700 );
+	
+	// Column Switcher for control chart
+	If( N Items( lstContinuousTags ) > 0,
+		ControlChart << Column Switcher( lstContinuousTags[1], lstContinuousTags )
+	);
+
+
+	
+); // END EXPR_DATA_MANIP
