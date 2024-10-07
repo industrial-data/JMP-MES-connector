@@ -1,0 +1,786 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : New tags
+ *
+ * Description:
+ * This script contains the additional script "Add new tags".
+ *
+ ************************************************************/
+
+/***********************************************************
+ *                SCRIPT TABLE OF CONTENTS
+ ************************************************************/
+
+/****************************************************
+ *  I. SETTINGS
+ *  II. USER INTERFACE 
+ *  III. NEW DATA EXTRACTION
+ *  IV. FORMATTING OUTPUT TABLE
+ ****************************************************/
+
+EXPR_ADDTAGS_UI = Expr(
+
+
+/****************************************************
+*  I. SETTINGS
+******************************************************/
+
+
+/* 1.1. Settings from initial data extraction */
+	
+	dt = Current Data Table();
+	dt << Maximize Window( 1 );
+	WindowSize = dt << Get Window Size();
+	// Screen dimensions
+	DevX = 1536;
+	DevY = 874;
+	ScreenX = WindowSize[1];
+	ScreenY = WindowSize[2];
+	RatioX = ScreenX / DevX;
+	RatioY = ScreenY / DevY;
+	strTableVisibility = Expr( strTableVisibility );
+	Try( tblSummary = Data Table( "Summary table" ) );
+	strPath = Expr( strPath );
+	
+/* 1.2. Source JSL dependencies */
+
+	If( !(Directory Exists( strPath )),
+		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval)" );
+		If( Is Missing( strPath ),
+			New Window( "Error",
+				<<modal,
+				<<Size( 300, 100 ),
+				<<OnOpen( Window( "Error" ) << moveWindow( 800, 400 ) ),
+				Text Box( "Please install the add-in MES Data Retrieval" ),
+				Border Box( Top( 15 ), Left( 100 ), Button Box( "OK" ) )
+			);
+			Throw();
+		);
+	);
+
+	
+	// Config file
+	Include( strPath || "config/config.jsl" );
+
+	// Source dependencies files needed
+	lstDependencies = Files In Directory( strPath || "include/", "recursive" );
+	For( i = 1, i <= N Items( lstDependencies ), i++,
+		Include( strPath || "include/" || lstDependencies[i] )
+	);
+	
+	f_Log( "INFO", "Start Add Tags script." );
+	
+/* 1.3. Server information */	
+
+	MES = Expr( MES );
+	SiteName = Expr( SiteName );
+	NetworkNode = Expr( NetworkNode );
+	ShortName = Expr( ShortName );
+	ServerType = Expr( ServerType );
+	TableIP21 = Expr( TableIP21 );
+	Condition = Expr( Condition );
+	ps_path = Expr( ps_path );
+	ps_hard_code_version = Expr( ps_hard_code_version );
+	SQL_OLEDB_PS = Expr( SQL_OLEDB_PS );
+	
+	f_Log(
+		"INFO",
+		"Server information - MES " || Char( MES ) || " / Server type " || Char( ServerType ) || " / SiteName " || Char( SiteName ) ||
+		" / NetworkNode " || Char( NetworkNode ) || " / ShortName " || Char( ShortName )
+	);
+	
+	
+/* 1.4. Extraction information */
+	
+	ExtractionMethod = Expr( ExtractionMethod );
+	PeriodNumValue = Expr( PeriodNumValue );
+	PeriodUnits = Expr( PeriodUnits );
+	NewPeriodNumValue = Expr( NewPeriodNumValue );
+	NewPeriodNumValue_s = Expr( NewPeriodNumValue_s );
+	Request = Expr( Request );
+	ValueIP21 = Expr( ValueIP21 );
+	TableIP21 = Expr( TableIP21 );
+	TablePI = Expr( TablePI );
+	SQL_InterpolatedPI = Expr( SQL_InterpolatedPI );
+	local_to_UTC_time_diff_in_s = Expr(
+		local_to_UTC_time_diff_in_s
+	);
+	
+	f_Log( "INFO", "Extraction details - Method " || Char( ExtractionMethod ) || " / Period " || Char( PeriodNumValue ) || Char( PeriodUnits ) );
+	
+	StartFormat = dt << Get Table Variable( "Start Time" );
+	EndFormat = dt << Get Table Variable( "End Time" );
+	If( Or( StartFormat == "", EndFormat == "" ),
+		f_DialogError( "Missing table variable(s): Start/End Time" )
+	);
+	
+	Start = Informat( StartFormat );
+	End = Informat( EndFormat );
+	Start_UTC = Start - local_to_UTC_time_diff_in_s;
+	End_UTC = End - local_to_UTC_time_diff_in_s;
+
+	If( ServerType == "IP21",
+		{StartFormat, EndFormat} = f_FormatDates( Start_UTC, End_UTC, 1 ),
+		{StartFormat, EndFormat} = f_FormatDates( Start, End, 0 )
+	);
+	
+	
+	f_Log( "INFO", "Start Date - " || Char( StartFormat ) || " / End Date - " || Char( EndFormat ) );
+	
+	
+/* 1.5. Tags */
+
+	LastSearchTagName = Expr( StrTagName );
+	LastSearchTagDesc = Expr( StrTagDesc );
+	
+	colNames = dt << GetColumnNames( "String" );
+	TagType_AA = Associative Array();
+	TagSelect_AA = Associative Array();
+	ColTS = Associative Array();
+			
+	For( i = 1, i <= N Items( colNames ), i++,
+		colName = colNames[i];
+		tagname = Column( dt, colName ) << Get Property( "tagname" );
+		tagname_desc_unit = Column( dt, colName ) << Get Property( "tagname_desc_unit" );
+		tagtype = Column( dt, colName ) << Get Property( "tagtype" );
+		addin_col_name = Column( dt, colName ) << Get Property( "addin_colname" );
+		
+		If( tagname != Empty(),
+			TagSelect_AA[tagname_desc_unit] = tagname
+		);
+		
+		If( tagtype != Empty(),
+			TagType_AA[tagname_desc_unit] = tagtype
+		);
+		
+		If( addin_col_name == "TS",
+			ColTS["TS"] = colName
+		);
+		
+		If( addin_col_name == "TS_UTC",
+			ColTS["TS_UTC"] = colName
+		);
+	
+	);
+
+/* 1.6. Filters */		
+
+	Old_Filters_AA = Expr( Filters_AA );
+	Condition = Expr( Condition );
+	strCondition = Match( Condition, "AND", "ALL", "OR", "ANY" );
+	
+	// Check Filter
+	Filters_AA = f_CleanFiltersAA( Old_Filters_AA, TagSelect_AA );
+	
+	// Convert in list
+	lstFilters = f_Convert2ListFilters( Filters_AA, Condition );
+	OldlstFilters = lstFilters;
+		
+		
+/****************************************************
+*  II. USER INTERFACE
+******************************************************/
+	
+	NewTagSelect_AA = Associative Array();
+				
+	winAddTags = New Window( "Add Tags",
+	Show Menu( 0 ),
+		show toolbars( 0 ), 
+		Border Box( Top( 20 ), Left( 15 ), Right( 15 ),
+			V List Box(
+				H List Box(
+					outlinebox_parameters = Outline Box( "Frozen parameters",
+						Border Box( Top( 10 ),
+							tblbox_parameters = Table Box(
+								String Col Box( "General", {"SERVER", "", "", "", "", "", "DATES", "", "", "EXTRACTION", "", "", ""} ),
+								String Col Box( "Parameter",
+									{"Server", "Location", "Network node", "Name", "Server type", "", "Start", "End", "", "Extraction method",
+									"Period", "Unit"}
+								),
+								valcolbox = String Col Box( "Value",
+									{MES, SiteName, NetworkNode, ShortName, ServerType, "", StartFormat, EndFormat, "", ExtractionMethod,
+									Char( PeriodNumValue ), PeriodUnits}
+								)
+							
+							)
+						)
+					),
+					Outline Box( "Tag search",
+						Panel Box( "",
+							Lineup Ruler Box(
+								Widths( {120 * RatioX, 200 * RatioY} ),
+								Lineup Box( N Col( 2 ), spacing( 10 ),
+									Text Box( "Tagname:" ),
+									txtbox_TagName = Text Edit Box( "" ),
+									Text Box( "Description:" ),
+									txtbox_TagDesc = Text Edit Box( "" )
+								)
+							),
+							V Center Box( Button Box( "Find tags", Eval( f_button.find_tags ) ) )
+						)
+					),
+					Outline Box( "Options",
+						Panel Box( "",
+							Lineup Ruler Box(
+								Widths( {140 * RatioX, 150 * RatioY} ),
+								Border Box( Left( 15 ), Right( 15 ),
+									Lineup Box( N Col( 2 ), spacing( 15 ),
+										Text Box( "Compute summary table:" ),
+										OptSummary = Check Box( {""} ),
+										Text Box( "Workflow:" ),
+										bttnWorkflow = Button Box( "Select file", 
+												 	
+											strWorkflowPath == "";
+												 	
+												 	// The user select the workflow path
+											strWorkflowPath = Pick File( "Select Workflow File", "$DOCUMENTS", {"JMP Files|jmpflow"}, 1, 0 );
+													
+													// Get workflow name
+											strWorkflowName = Word( -1, strWorkflowPath, "/" );
+											If( strWorkflowPath != "",
+												bttnWorkflow << Set Button Name( strWorkflowName ),
+												bttnWorkflow << Set Button Name( "Select file" )
+											);
+										)
+									)
+								)
+							)
+						)
+					)
+				),
+				Outline Box( "If " || strCondition || " condition(s) are met",
+					V List Box(
+						H List Box(
+							Border Box( Left( 15 ), Top( 15 ), lstFiltersRegistered = List Box( {}, <<Set Size( 1052 * RatioX, 100 * RatioY ) ) ),
+							Border Box( Left( 40 ), Top( 15 ),
+								H List Box(
+									V List Box(
+										Lineup Ruler Box(
+											Widths( {120 * RatioX, 200 * RatioY} ),
+											Lineup Box( N Col( 1 ),
+												bttn_Update = Button Box( "      Update Filter      ",
+													str.script_name = "Add tags";
+													f_button.update_filter;
+												),
+												Spacer Box( Size( 15, 15 ) ),
+												bttn_RemoveFilter = Button Box( "   Remove    ", 
+														//Log parameter
+													section = "FILTER";
+
+													Try( (lstFiltersRegistered << Get Selected)[1], f_DialogError( "No filter selected" ) );
+													lst_FilterRemoved = lstFiltersRegistered << Get Selected;
+													f_Log(
+														"INFO", "User removed the filter - " || Concat Items( lst_FilterRemoved, " AND " ), section
+													);
+	
+														// Remove from list of filters in UI
+													ID_to_remove = lstFiltersRegistered << Get Selected Indices();
+													lstFiltersRegistered << Remove Selected;
+	
+														// Remove from list of filters in algo
+													Filters_AA = f_ReorderAssociativeArray( Filters_AA, ID_to_remove );
+													lstFilters = f_Convert2ListFilters( Filters_AA, Condition );
+											
+	
+														// Decrease NextID
+													NextID = N Items( Filters_AA ) + 1;
+														//Show( Filters_AA );
+												),
+												Spacer Box( Size( 15, 15 ) ),
+												bttn_RemoveAllFilters = Button Box( " Remove all ",
+													lstFiltersRegistered << Remove All;
+													NextID = 1;
+													Filters_AA = Associative Array();
+													f_Log( "INFO", "User removed all filters", "FILTER" );
+												)
+											)
+										)
+									)
+								)
+							)
+						)
+					)
+				), // End Outine box Filters Registered
+				Border Box( Top( 30 ),
+					Outline Box( "Tag selection",
+						H List Box(
+							V List Box(
+								Border Box( Top( 15 ), Bottom( 5 ), Left( 4 ),
+									Lineup Box( N Col( 2 ), Text Box( "Available tags" ), txtbox_nbTags = Text Box( " >>>" ) )
+								),
+								H List Box(
+							
+									Border Box( top( 2 ), Icon Box( "SearchIndex" ) ),
+									Spacer Box( size( 5, 10 ) ), 
+											
+									Border Box( top( 2 ),
+										txt_SearchBarTag = Text Edit Box( "", <<set width( 650 * RatioX ), <<set text changed( f_SearchBarTag ) )
+									),
+									bttn_ResetSearchTag = Button Box( "",
+										<<set icon( "DebuggerDeleteBreakpoint" ),
+										<<set script(
+											txt_SearchBarTag << set text( "" );
+											f_SearchBarTag( txt_SearchBarTag, "" );
+										),
+										<<set tip( "Clear filter" ), 
+
+									)
+								),
+								Border Box( Left( 26 ), lstAvailableTags = List Box( {}, <<Set Size( 650 * RatioX, 272 * RatioY ) ) )
+					
+							),
+							V List Box(
+								Border Box( Top( 145 * RatioY ), Right( 10 ), Left( 10 ),
+									bttn_AddTag = Button Box( "", 
+								
+										selected_tags = lstAvailableTags << GetSelected;
+								
+												// Update TagList and TagList_DescUnit
+										If( N Items( selected_tags ) > 0, 
+												
+											For( k = N Items( selected_tags ), k >= 1, k--, 
+													
+												TagToAdd = selected_tags[k];
+												indTag = As List( Loc( TagList_DescUnit, TagToAdd ) )[1];
+												TagToAdd_NO_desc_units = tag_NO_desc_units_list[indTag];
+														
+														// Check if it was already added
+												TagToAdd_NOTYPE = f_RemoveSuffixFromWord( TagToAdd, AllTypes );
+												TagSelect_AA_KEYS = NewTagSelect_AA << get keys;
+												If( !Contains( TagSelect_AA_KEYS, TagToAdd_NOTYPE ),
+													If( !Contains( TagSelect_AA_KEYS, TagToAdd_NO_desc_units ),
+														NewTagSelect_AA[TagToAdd_NOTYPE] = TagToAdd_NO_desc_units,
+														Remove From( selected_tags, k )
+													)
+												);
+											);
+													
+										);
+												
+												// Update list of selected tags in first tab
+										lstbox_SelectedTags << Append( selected_tags );
+												
+												// Update number of selected tags
+										n_selected = N Items( lstbox_SelectedTags << Get Items() );
+										Try(
+											If( n_selected == 0,
+												txtbox_nbSelectTags << Set Text( "" ),
+												txtbox_nbSelectTags << Set Text( " [ " || Char( n_selected ) || " ]" )
+											) 
+
+										);
+												
+									)
+								),
+								Border Box( Right( 10 ), Left( 10 ),
+									bttn_RemoveTag = Button Box( "", 
+								
+									// Update TagList and TagList_DescUnit
+										Try(
+											tags_to_remove = lstbox_SelectedTags << Get selected();
+											For( i = 1, i <= N Items( tags_to_remove ), i++,
+												TagToRemove = tags_to_remove[i];
+												TagToRemove_NOTYPE = f_RemoveSuffixFromWord( TagToRemove, AllTypes );
+												NewTagSelect_AA << Remove( TagToRemove_NOTYPE );
+														
+											);
+										);
+									// Update list of tags analyzed in first tab
+										lstbox_SelectedTags << Remove Selected;
+									
+									// Update number of tags analyzed
+										n_selected = N Items( lstbox_SelectedTags << Get Items() );
+										Try(
+											If( n_selected == 0,
+												txtbox_nbSelectTags << Set Text( "" ),
+												txtbox_nbSelectTags << Set Text( " [ " || Char( n_selected ) || " ]" )
+											)
+										);
+						
+									)
+								)
+							),
+							V List Box(
+								Border Box( Top( 20 ),
+									Lineup Box( N Col( 2 ), Text Box( ">>> Selected tags" ), txtbox_nbSelectTags = Text Box( " " ) )
+								),
+								Border Box( Top( 18 ), Left( 2 ), lstbox_SelectedTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) ) ),
+								Lineup Box( N Col( 2 ),
+									bttn_RemoveAll = Button Box( " Remove all ",
+										lstbox_SelectedTags << Remove All;
+										txtbox_nbSelectTags << Set Text( "" );
+										NewTagSelect_AA = Associative Array();
+									),
+									bttn_PasteTag = Button Box( "Paste",
+										copiedtags = Get Clipboard();
+										copiedtaglist = Words( copiedtags, "\!t\!r\!n" );
+									// Check for duplicates
+										unique_copiedtaglist = List();
+										For( i = 1, i <= N Items( copiedtaglist ), i++,
+											txt_copied = Trim( Char( copiedtaglist[i] ) );
+											If( !(Contains( unique_copiedtaglist, txt_copied )),
+												Insert Into( unique_copiedtaglist, txt_copied )
+											);
+										);
+												
+										For( i = 1, i <= N Items( unique_copiedtaglist ), i++,
+											TagToAdd = unique_copiedtaglist[i];
+													// Check if it was already added		
+											list = NewTagSelect_AA << get values;
+											If( !(Contains( list, TagToAdd )),
+												NewTagSelect_AA[TagToAdd] = TagToAdd;
+														// Add the copied-paste tags in the tag list to analyze 
+												lstbox_SelectedTags << Append( TagToAdd );
+											);
+													
+										);
+												
+												
+									
+										n_selected = N Items( lstbox_SelectedTags << Get Items() );
+									// Update the number of tags to analyze displayed in the UI
+										Try(
+											If( n_selected == 0,
+												txtbox_nbSelectTags << Set Text( "" ),
+												txtbox_nbSelectTags << Set Text( " [ " || Char( n_selected ) || " ]" );
+
+											)
+										);
+									
+									)
+					
+								)
+
+							),
+							V List Box(
+								Border Box( Left( 10 ), Top( 145 * RatioY ),
+									bttn_UpTag = Button Box( "",
+										lstTag_tochange = lstbox_SelectedTags << Get Items();
+										Tags_tomove = lstbox_SelectedTags << GetSelected();
+										If( N Items( Tags_tomove ) > 0,
+											lstTag_tochange = f_MoveUp( lstTag_tochange, Tags_tomove );
+											lstbox_SelectedTags << Remove All;
+											lstbox_SelectedTags << Append( lstTag_tochange );
+
+											For( i = 1, i <= N Items( Tags_tomove ), i++,
+												lstbox_SelectedTags << Set selected( Contains( lstTag_tochange, Tags_tomove[i] ) )
+											);
+										);
+									
+									)
+								),
+								Border Box( Left( 10 ),
+									bttn_DownTag = Button Box( "",
+										lstTag_tochange = lstbox_SelectedTags << Get Items();
+										Tags_tomove = lstbox_SelectedTags << GetSelected();
+										If( N Items( Tags_tomove ) > 0,
+											lstTag_tochange = f_MoveDown( lstTag_tochange, Tags_tomove );
+											lstbox_SelectedTags << Remove All;
+											lstbox_SelectedTags << Append( lstTag_tochange );
+
+											For( i = 1, i <= N Items( Tags_tomove ), i++,
+												lstbox_SelectedTags << Set selected( Contains( lstTag_tochange, Tags_tomove[i] ) )
+											);
+										);
+									)
+								)
+							),
+							V Center Box( Border Box( Left( 10 ), bttn_AddTags = Button Box( "Add tags", Eval( EXPR_ADDTAGS_EXTRACT ) ) ) )
+						)
+					)
+				)
+			)
+		)
+	); // End Window
+	
+	// Center the Preview Window
+	winAddTags << Maximize Window( 1 );
+	
+	
+	
+	tblbox_parameters << Set Underline Headings( 1 );
+	tblbox_parameters << Set Shade Headings( 0 );
+	tblbox_parameters << Set Heading Column Borders( 0 );
+	
+	valcolbox << Set Width( 575 * RatioX );
+	outlinebox_parameters << outlinecloseorientation( "Vertical" );
+	
+	// Set icons for buttons
+	bttn_AddTag << Set Icon( "Next" );
+	bttn_RemoveTag << Set Icon( "Prev" );
+	bttn_UpTag << Set Icon( "ListItemUp" );
+	bttn_DownTag << Set Icon( "ListItemDown" );
+	bttn_AddTags << Set Icon( "DebuggerRunWithoutBreakpoints" );
+	
+	//Set last tag and description search
+	txtbox_TagName << Set text( LastSearchTagName );
+	txtbox_TagDesc << Set text( LastSearchTagDesc );	
+
+	//Add filters
+	lstFiltersRegistered << Append( lstFilters );
+								 
+						
+); // End EXPR_ADDTAGS_UI
+
+
+
+/****************************************************
+*  III. NEW DATA EXTRACTION
+******************************************************/
+
+
+EXPR_ADDTAGS_EXTRACT = Expr(
+
+	section = "ADD TAGS";
+	
+/* 3.1. Get new tags */
+		
+	If( N Items( NewTagSelect_AA ) == 0,
+		f_DialogError( "No tags selected" )
+	);
+		
+	lstTagNames_UnitDesc = lstbox_SelectedTags << Get Items();//Vector of tags in this form: {"TAG_1","TAG_2",...,"TAG_N"}
+	lstTagNames = f_Remove_UnitDescription( lstTagNames_UnitDesc, NewTagSelect_AA ); // Remove description , unit and type
+	
+	f_Log( "INFO", "List of new tags " || Concat Items( lstTagNames, "  /  " ) );
+
+	
+	OptSummaryTbl = OptSummary << Get();
+	If( OptSummaryTbl == 1,
+		f_Log( "INFO", "Option to compute the summary table activated.", section ),
+		f_Log( "INFO", "Option to compute the summary table disabled.", section )
+	);
+	
+/* 3.2. Check new tags */
+
+	// Check if tags already exist in data table
+	intersection = List();
+	For Each( {{key, value}, index}, NewTagSelect_AA, 
+
+		If( Contains( TagSelect_AA << Get Values, value ),
+			Insert Into( intersection, value );
+			Remove From( NewTagSelect_AA, key );
+			Remove From( lstTagNames, As List( Loc( lstTagNames, value ) ) );
+		)
+	);
+	
+	N_CommunTags = N Items( intersection );
+	If( N_CommunTags > 0,
+		f_DialogWarning( Char( N_CommunTags ) || " tag(s) already exist(s) - " || Concat Items( intersection, " " ) )
+	);
+
+	If( N Items( lstTagNames ) == 0,
+		f_DialogError( "All tags already exist" )
+	);
+	
+	
+/* 3.3. Get new tags after removing duplicates */
+
+	f_Log( "INFO", "New tags to extract after removing duplicates - " || Concat Items( lstTagNames, " / " ) );
+	
+			
+/* 3.4. Get table scripts */
+
+	main_script_names = Associative Array( dt << get table script names );
+
+/* 3.5. Check time discontinuity */	
+	
+	PropertyDiscontinuity = Column( dt, ColTS["TS_UTC"] ) << Get Property( "Time Discontinuities" );
+	If( !(Is Empty( PropertyDiscontinuity )),
+		win = New Window( "Warning",
+			<<Modal,
+			V List Box(
+				Text Box( "File had discont. alarms in the past which were accepted (cf TS_UTC column property \!"Time Discontinuities\!" )" ),
+				Spacer Box( 15, 15 ),
+				H List Box( Border Box( Left( 80 ), Lineup Box( N Col( 2 ), Button Box( "OK" ), Button Box( "Cancel", Throw() ) ) ) )
+			)
+		);
+		
+		// Stop preview if the user clicks on "Cancel" button
+		If( win["button"] == -1,
+			Try(
+				bttn_AddTags << Set Button Name( "Run extraction" );
+				bttn_AddTags << enabled( 1 );
+			);
+			Throw();
+		);
+	);
+	
+/* 3.6. Extract New tags */
+		
+	Try(
+		tblNewTags = f_RunExtraction( lstTagNames, StartFormat, EndFormat, ServerType, Filters_AA ),
+		f_DialogError( "An error occurred when extracting the tags (loop tag extraction). Please check the log (CTRL+Shift+L)" )
+	);
+	
+
+/****************************************************
+*  IV.  FORMATTING OUTPUT TABLE
+******************************************************/
+
+
+/* 4.1. Set tags properties */
+	
+	f_Log( "INFO", "Creating columns and metadata as properties." );
+	
+		
+	TagExtract_AA_Keys = TagExtract_AA << Get Keys();
+	
+	For( i = 1, i <= N Items( TagExtract_AA_Keys ), i++, 
+	
+		TagWithDesc = TagExtract_AA_Keys[i];
+		strTagType = TagType_AA[TagWithDesc];
+		
+		If( ServerType == "IP21", 
+			
+			If( strTagType == "Analog" | strTagType == "AI",
+				Column( tblNewTags, TagWithDesc ) << data type( numeric ) << modeling type( continuous )
+			);
+				
+			If( Or( strTagType == "Discrete", strTagType == "DI" ) & TableIP21 == "HISTORY(80)",
+				Column( tblNewTags, TagWithDesc ) << Set Modeling Type( "Ordinal" )
+			);
+			
+		, 
+			
+			If( strTagType == "D" | strTagType == "S",
+				Column( tblNewTags, TagWithDesc ) << data type( character )
+			)
+			 
+		);
+				
+		Try(
+		// Colname (initially it is also the same as the tagname with unit + description)
+			Column( tblNewTags, TagWithDesc ) << Set Property( "addin_colname", TagWithDesc );
+		// Tagname with unit + description
+			Column( tblNewTags, TagWithDesc ) << Set Property( "tagname_desc_unit", TagWithDesc );
+		// Tagname
+			Column( tblNewTags, TagWithDesc ) << Set Property( "tagname", TagExtract_AA[TagWithDesc] );
+		// Tagtype
+			Column( tblNewTags, TagWithDesc ) << Set Property( "tagtype", TagType_AA[TagWithDesc] );
+		);
+		
+		Try(
+			If( !(Contains( PreviewTags, TagType_AA[TagWithDesc] )),
+				Column( tblNewTags, TagWithDesc ) << Data Type( Numeric, Format( "Fixed Dec", 12, 6 ) ) << Set Modeling Type( "Continuous" )
+			)
+		);
+	);
+		
+	
+/* 4.2. Add new tags columns, by UTC */
+
+	f_Log( "INFO", "Add new tags columns, by UTC." );
+	
+	Column( tblNewTags, "TS_UTC" ) << data type( numeric ) << modeling type( continuous ) << Format( "yyyy-mm-ddThh:mm:ss" );
+	Column( dt, ColTS["TS_UTC"] ) << data type( numeric ) << modeling type( continuous ) << Format( "yyyy-mm-ddThh:mm:ss" );
+
+	// Update data tables
+	
+	strCol_TS = "TS";
+	strCol_TS_UTC = "TS_UTC";
+	Eval(
+		Eval Expr(
+			dt << Update(
+				With( tblNewTags ),
+				Match Columns(
+					:TS = Expr(
+						Parse( ":Name(\!"" || strCol_TS || "\!")" )
+					),
+					:TS_UTC = Expr(
+						Parse( ":Name(\!"" || strCol_TS_UTC || "\!")" )
+					)
+				)
+			)
+		)
+	);
+
+	dt << Maximize window( 1 ); // Full screen
+	
+	
+/* 4.3. Update summary table */
+
+	If( OptSummaryTbl == 1,
+		f_Log( "INFO", "Update summary table." );
+
+		Try(
+			tblSummary = Data Table( "Summary Table" );
+			SummaryExist = 1;
+		,
+			SummaryExist = 0
+		);
+	
+		If( SummaryExist == 1, 
+		
+		// If Summary table exist, then we just add the new tags on the summary table
+			tblTag_SummaryNEW = f_SummaryTAG( tblNewTags, ServerType );
+			tblSummary = Data Table( "Summary Table" );
+			tblSummary << Concatenate( tblTag_SummaryNEW, "Append to first table" );
+			Close( tblTag_SummaryNEW, nosave );
+		
+		, 
+		// If summary table exist
+			Try( tblSummary = f_SummaryTAG( tblNewTags, ServerType ) )
+		);
+		
+		Try( tblSummary << New data view() );
+	);
+	
+	Close( tblNewTags, nosave ); // comment this line to leave concat table open
+
+
+/* 4.4. Remove initial attached scripts generated by JMP */
+
+
+	f_Log( "INFO", "Cleaning new scripts added after the updates." );
+
+	main_script_names_after_update = Associative Array( dt << get table script names );
+		
+	uncommon_scripts = main_script_names_after_update;
+	uncommon_scripts << Remove( main_script_names );
+	list_uncommon_scripts = uncommon_scripts << Get Keys;
+	dt << Delete Scripts( list_uncommon_scripts );
+
+/* 4.5. Output table display settings */
+
+	// Optimize display  : Columns width 300
+	colnames = dt << Get column names( "String" );
+	For( i = 3, i <= N Items( colnames ), i++,
+		colname = Char( colnames[i] );
+		Column( dt, colname ) << Set Display Width( 300 );
+	);
+
+	
+/* 4.6. Update table variables */
+
+	f_Log( "INFO", "Update table variables." , section);
+
+	NewUpdateFilters = f_newElementsNotInOldList( OldlstFilters, lstFilters );
+	
+	// Add new updated filters if any
+	
+	If( N Items( NewUpdateFilters ) > 0,
+		If( dt << Get Table Variable( "UPDATE" ) == "",
+			dt << Set Table Variable( "UPDATE", " ---- " )
+		);
+		For Each( {filter, index}, NewUpdateFilters, 
+		
+			// Check if it does not already exist
+			If( dt << Get Table Variable( Char( filter ) ) == "", 
+				
+				dt << Set Table Variable( Char( filter ), "." )
+			)
+		);
+	);
+	
+		
+/* 4.7. Workflow */
+
+	If( strWorkflowPath != "",
+		Open( strWorkflowPath )
+	);
+	
+	winAddTags << Close Window();
+		
+);	// End EXPR_EXTRACT_NEW_TAGS

@@ -1,0 +1,118 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Add filter
+ *
+ * Description:
+ * This script contains what is run if the user clicks on button "Add" to add a filter.
+ *
+ ************************************************************/
+
+/***********************************************************
+ *                SCRIPT TABLE OF CONTENTS
+ ************************************************************/
+
+/****************************************************
+ *  I. SETTINGS
+ *  II. ADD FILTER 
+ ****************************************************/
+
+
+EXPR_ADD_FILTER = Expr(
+
+/****************************************************
+*  I. SETTINGS
+******************************************************/
+
+	// Log parameter
+	section = "FILTER";
+	
+/* 1.1. Filter information */
+
+	Try( TagName_UnitDesc = (lstbox_SelectedTags2 << GetSelected())[1], f_DialogError( "No tag selected" ) );
+	Comp = cbbox_FilterComparison << GetSelected();
+	Value = txtFilter << Get Text();
+	ServerType = rdbox_ServerType << Get Selected;
+	sep_list = txt_sep_edit << Get Text();
+
+		
+	f_Log( "INFO", "User adds filter - " || Char( TagName_UnitDesc ) || " " || Char( Comp ) || " " || Char( Value ), section );		
+	
+/* 1.2. Check Filter information */
+
+	If( Value == "",
+		f_DialogError( "Missing value" )
+	);
+	
+	If( And( Contains( CompNum, Comp ), Is Missing( Num( Value ) ) ),
+		f_DialogError( "Invalid value" )
+	);
+		
+	// Check if the filter is not already in the list of registered filters	
+	str_FilterConcat = Char( TagName_UnitDesc ) || " " || Char( Comp ) || " " || Char( Value );
+	lst_Filters = lstFiltersRegistered << Get Items();
+	If( Contains( lst_Filters, str_FilterConcat ),
+		f_DialogError( "Filter already exist" )
+	);
+
+/****************************************************
+*  II. ADD FILTER
+******************************************************/
+
+/* 2.1 Get list separator (if list) */
+	
+	// Clean Value
+	If( Comp == "In",
+		f_Log( "INFO", "Separator used in the list: " || sep_list, section );
+		lstValue = Words( Value, sep_list );
+		,
+		lstValue = List();
+		Insert into(lstValue, Value)
+	);
+	
+	For( j = 1, j <= N Items( lstValue ), j++,
+		If( Is Missing( Num( lstValue[j] ) ),
+			lstValue[j] = "'" || lstValue[j] || "'"
+		)
+	);
+	Value = Concat Items( lstValue, "," );
+		
+/* 2.2 Get tag type */
+
+	TagType = f_CheckStringEnding( TagName_UnitDesc, AllTypes );
+	TagType_AA_KEYS = TagType_AA << Get Keys();
+	
+	If( TagType == 0,
+		If( !(Contains( TagType_AA_KEYS, TagName_UnitDesc )), 
+		
+			ExtractionMethod = rdbox_Method << Get Selected();
+			PeriodNumValue = PeriodValue << Get();
+			PeriodUnits = rdbox_PeriodUnits << Get Selected();
+		// Change Period Format 
+			NewPeriodNumValue = f_SetPeriodFormat( PeriodNumValue, PeriodUnits );
+		// Estimation of number of rows to be extracted per tag	
+			If( ExtractionMethod == "Actual",
+				NewPeriodNumValue_s = 30,  //s (common freq., some tags can go to 5 seconds)
+				NewPeriodNumValue_s = NewPeriodNumValue / 10
+			);
+			f_SetUp4Extraction( ServerType );
+			TagType = f_SQL_GET_TAGTYPE( f_Remove_UnitDescription( TagName_UnitDesc, TagSelect_AA ), ServerType );
+			TagType_AA[TagName_UnitDesc] = TagType;
+		,
+			TagType = TagType_AA[TagName_UnitDesc]
+		)
+	);
+	
+/* 2.3 Add Filter */
+
+	// [KEY: ID, correspond to the order of appearance in the list of filters] [VALUE: 1- Tagname with unit/descr (str) / 2- Tag Type (str) / 3- Filters (list)]
+	Eval( Eval Expr( Filters_AA[NextID] = {Expr( TagName_UnitDesc ), Expr( TagType ), {Expr( Comp ), Expr( Value )}} ) );
+	NextID = N Items( Filters_AA ) + 1; //increment uniqueID
+	
+	// Add the concatenated filter to the list of registered filters
+	lstFiltersRegistered << Append( str_FilterConcat );
+		// Open the outline box with registered filters
+	outline_FiltersRegistered << Close( 0 );
+	
+		
+); // END EXPR_ADD_FILTER

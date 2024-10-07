@@ -1,0 +1,403 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Data Extraction
+ *
+ * Description:
+ * This script run the data extraction once the button "Run extraction" is pressed on in the user interface.
+ *
+ * For more information, refer to the function documentation within this script.
+ ************************************************************/
+ 
+/***********************************************************
+ *                SCRIPT TABLE OF CONTENTS
+ ************************************************************/
+
+/****************************************************
+ *  I. SETTINGS
+ *  II. DATA EXTRACTION 
+ *  III. FORMATTING TABLE EXTRACTED
+ ****************************************************/
+
+EXPR_DATA_EXTRACTION = Expr( 
+
+/****************************************************
+*  I. SETTINGS
+******************************************************/
+
+	section = "DATA EXTRACTION";
+	
+	f_Log( "INFO", "User launchs data extraction.", section );
+	
+	/* 1.1. Server information */
+	
+	Try( selected_MES = (lst_MES_servers << Get Selected)[1], f_DialogError( "No server selected" ) );
+
+	
+	is_checked = chkbox_edit_adress << Get();
+	MES = txtbox_ServerAddress << Get Text;
+	ServerExtension = txtbox_ServerExtension << Get Text;
+	ShortName = txtbox_Shortname << Get text;
+	ServerType = rdbox_ServerType << Get Selected;
+	TableName = txt_TableName << Get text;
+	
+	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
+		
+	If( is_checked == 1,
+		NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+	);
+	
+		
+	bttn_Extraction << enabled( 0 ); //disables button
+	bttn_Extraction << Set Button Name( "Extracting..." );
+	bttn_Extraction2 << enabled( 0 ); //disables button
+	bttn_Extraction2 << Set Button Name( "Extracting..." );
+	
+	// Remember last server selected
+	Save Text File(
+		str.PathLastServerSelected,
+		Eval Insert(
+			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";"
+		)
+	);
+	
+	
+	/* 1.2. User options */
+	
+	OptSummaryTbl = OptSummary << Get();
+	If( OptSummaryTbl == 1,
+		f_Log( "INFO", "Option to compute the summary table activated.", section ),
+		f_Log( "INFO", "Option to compute the summary table disabled.", section )
+	);
+		
+	/* 1.3. Tags selection */
+	
+	lstTagNames_UnitDesc = lstbox_SelectedTags << Get Items();//Vector of tags in this form: {"TAG_1","TAG_2",...,"TAG_N"}
+	lstTagNames = f_Remove_UnitDescription( lstTagNames_UnitDesc, TagSelect_AA ); // Remove description , unit and type
+	
+	N_SelectedTags = N Items( lstTagNames );
+
+	f_Log( "INFO", Char( N_SelectedTags ) || " tags were selected by the user for the data extraction.", section );
+
+	If( N_SelectedTags == 0,
+		f_DialogError( "No tag selected" )
+	);
+	
+	/* 1.4. Extraction information */
+	
+	ExtractionMethod = rdbox_Method << Get Selected();
+	PeriodNumValue = PeriodValue << Get();
+	PeriodUnits = rdbox_PeriodUnits << Get Selected();
+	Start = StartTime << Get();
+	End = EndTime << Get();
+	Condition = Match( cb_filter_condition << Get(), 1, "AND", 2, "OR" );
+
+	
+	// Star time must be earlier than End time
+	If( Start >= End,
+		f_DialogError( "Invalid time entry" )
+	);
+	
+
+	f_Log( "INFO", "Method " || Char( ExtractionMethod ) || " / Frequency " || Char( PeriodNumValue ) || " " || Char( PeriodUnits ), section );
+	
+
+	// Change Period Format 
+	NewPeriodNumValue = f_SetPeriodFormat( PeriodNumValue, PeriodUnits );
+	
+	If( ExtractionMethod == "Actual",
+		NewPeriodNumValue_s = 30,  //s (common freq., some tags can go to 5 seconds)
+		NewPeriodNumValue_s = NewPeriodNumValue / 10
+	); 
+	
+	
+	
+	If( ServerType == "IP21", 
+	
+		// Initialize even the variables we are not using
+		TablePI = "";
+		SQL_InterpolatedPI = "";
+		
+	, 
+		
+		// Initialize even the variables we are not using
+		ValueIP21 = "";
+		TableIP21 = "";
+		Request = "";
+		
+	); // END If ServerType == "IP21"
+	
+	
+/* 1.5 Filters */
+	
+	lstTagFilters = lstFiltersRegistered << Get Items();
+	If( N Items( lstTagFilters ) > 0,
+		f_Log(
+			"INFO",
+			"Filters registered : " || " (" || Char( N Items( lstTagFilters ) ) || ") " || " - " || Char( Concat Items( lstTagFilters, " " ) ),
+			section
+		),
+		f_Log( "INFO", "No filters registered.", section )
+	);
+	
+/****************************************************
+*  II. DATA EXTRACTION
+******************************************************/	
+	
+	
+	f_Log( "INFO", "START Data extraction.", section );
+	
+	Try( Delete Symbols( tblSummary ) ); // << SetName("Previous summary table"));
+	Try( Delete Symbols( tblAllTags ) );// << SetName("Previous extraction"));
+		
+	n_estimated_rows = (End - Start) / NewPeriodNumValue_s;
+	f_Log( "INFO", "Number of points estimated for extraction : " || Char( n_estimated_rows ), "DATA EXTRACTION" );
+	
+	Limit = Match( ServerType, "IP21", NRow_limit_IP21, "PI", NRow_limit_PI );
+	End = f_CheckDates( Start, End, NewPeriodNumValue_s, Limit, ServerType );
+
+	{StartFormat, EndFormat} = f_FormatDates( Start, End, 0 );
+	f_Log( "INFO", "Start date " || Char( StartFormat ) || " / End date " || Char( EndFormat ), "DATA EXTRACTION" );
+	
+	f_RunExtraction( lstTagNames, StartFormat, EndFormat, ServerType, Filters_AA );
+	/*
+	tblAllTags = Try(
+		f_RunExtraction( lstTagNames, StartFormat, EndFormat, ServerType, Filters_AA ),
+		f_DialogError( "An error occurred when extracting the tags (loop tag extraction). Please check the log (CTRL+Shift+L)" );
+	);
+	*/
+	
+/****************************************************
+*  III. FORMATTING TABLE EXTRACTED
+******************************************************/	
+		
+		
+/* 3.1 Table output name */
+	
+	If( TableName != "", 
+	
+		f_Log( "INFO", "Data file name selected by the user - " || Char( TableName ), section );
+		TableName = f_Remove_SpecialCharacters( TableName );
+		f_Log( "INFO", "Data file name selected by the user after removing special characters - " || Char( TableName ), section );
+		
+	, 
+		
+		If( is_checked == 0,
+			TableName = Char( Format( End, "yyyy-mm-dd" ) ) || "_" || Char( SiteName ),
+			TableName = Char( Format( End, "yyyy-mm-dd" ) ) || "_" || Char( MES )
+		);
+		
+		f_Log( "INFO", "Data file name - " || Char( TableName ), section );
+	);
+	
+	f_Log( "INFO", "END Data extraction.", section );
+	
+	
+	Try(
+		tblAllTags << SetName( TableName ); // Change name
+	,
+		f_DialogError( "Server connection failed" )
+	);
+	
+	/* 3.2 Table output size */
+	
+	tblAllTags << ShowWindow( 1 ); // Visible
+	tblAllTags << Maximize window(); // Full screen
+
+
+/* 3.3 Remove attached scripts generated by JMP */
+	
+	script_names = tblAllTags << get table script names;
+	tblAllTags << delete scripts( script_names );
+	
+	/* 3.4 Get local server time tiff */
+	
+	f_Log( "INFO", "Set in the table the tagnames properties.", section );
+		
+	tblAllTags << Current Data Table();
+	Try(
+		TS_UTC_min_date = Col Min( tblAllTags:TS_UTC );//<<format("yyyy-mm-ddThh:mm:ss");
+		TS_Start_min_date = Col Min( tblAllTags:TS );//<<format("yyyy-mm-ddThh:mm:ss");
+		local_to_UTC_time_diff_in_s = TS_UTC_min_date - TS_Start_min_date;
+	
+	,
+		f_DialogWarning( "TS format unkown. Can't calculate local to UTC time difference." );
+		local_to_UTC_time_diff_in_s = 0
+
+		;
+	);
+	
+		
+	/* 3.5 Set tagnames properties and column format*/
+	
+	f_Log( "INFO", "Set in the table the tagnames properties.", section );
+	
+	TagExtract_AA_Keys = TagExtract_AA << Get Keys();
+	
+	For( i = 1, i <= N Items( TagExtract_AA_Keys ), i++, 
+	
+		TagWithDesc = TagExtract_AA_Keys[i];
+				
+		Try(
+		// Colname (initially it is also the same as the tagname with unit + description)
+			Column( tblAllTags, TagWithDesc ) << Set Property( "addin_colname", TagWithDesc );
+		// Tagname with unit + description
+			Column( tblAllTags, TagWithDesc ) << Set Property( "tagname_desc_unit", TagWithDesc );
+		// Tagname
+			Column( tblAllTags, TagWithDesc ) << Set Property( "tagname", TagExtract_AA[TagWithDesc] );
+		// Tagtype
+			Column( tblAllTags, TagWithDesc ) << Set Property( "tagtype", TagType_AA[TagWithDesc] );
+		);
+		
+		// Column format: 6 decimals by default for continuous tags
+		Try(
+			If( !(Contains( PreviewTags, TagType_AA[TagWithDesc] )),
+				Column( tblAllTags, TagWithDesc ) << Data Type( Numeric ) << Set Modeling Type( "Continuous" )
+			)
+		);
+	);
+	
+	// Name and properties for TS and TS_UTC colums	(no tagname property)
+	Column( tblAllTags, "TS" ) << Set Property( "addin_colname", "TS" );
+	Column( tblAllTags, "TS_UTC" ) << Set Property( "addin_colname", "TS_UTC" );
+	
+	
+	/* 3.6 Summary table */
+	
+	If( OptSummaryTbl == 1, 
+	
+		f_Log( "INFO", "START summary table creation.", section );
+	
+		Try(
+			tblSummary = f_SummaryTAG( tblAllTags, ServerType );
+			tblSummary << New Data View();
+		,
+			f_DialogError( "An error occurred when creating the summary table. Please check the log (CTRL+Shift+L)" )
+		);
+		
+	
+		f_Log( "INFO", "END summary table creation.(hidden table).", section );
+	); 
+	
+	/* 3.7 Set table variables */
+	
+	f_Log( "INFO", "Add table variables (Server Name, Start Time, End Time, Date format, Method , Frequency, Filters)", section );
+	
+	Current Data Table( tblAllTags );
+	
+	tblAllTags << Set Table Variable( "File info", " None " );
+	tblAllTags << Set Table Variable( "DO NOT EDIT", "!!!" );
+	If( is_checked == 0,
+		tblAllTags << Set Table Variable( "Servername", Char( SiteName ) ),
+		tblAllTags << Set Table Variable( "Servername", Char( MES ) )
+	);
+	
+	tblAllTags << Set Table Variable( "Start Time", Char( Format( Start, "yyyy-mm-ddThh:mm:ss" ) ) );
+	tblAllTags << Set Table Variable( "End Time", Char( Format( End, "yyyy-mm-ddThh:mm:ss" ) ) );
+	tblAllTags << Set Table Variable( "Date format", "yyyy-MM-dd HH:mm:ss" );
+	tblAllTags << Set Table Variable( "Method", Char( ExtractionMethod ) );
+	tblAllTags << Set Table Variable( "Frequency", PeriodNumValue );
+	tblAllTags << Set Table Variable( "Unit", Char( PeriodUnits ) );
+	
+	// Add one table variable by filter
+	lstFilters = f_Convert2ListFilters( Filters_AA, Condition );
+	If( N Items( lstFilters ) > 0,
+		For( i = 1, i <= N Items( lstFilters ), i++,
+			tblAllTags << Set Table Variable( "Filter " || Char( i ), Char( lstFilters[i] ) )
+		)
+	);
+	
+	/* 3.8 Set table settings */
+	
+	f_Log( "INFO", "Increases the size of output columns.", section );
+	// Optimize display  : Columns width depends to content length
+	colnames = tblAllTags << Get column names( "String" );
+	For( i = 3, i <= N Items( colnames ), i++,
+		colname = Char( colnames[i] );
+		Column( tblAllTags, colname ) << Set Display Width( 300 );
+	);
+	
+	
+	/* 3.9 Create additional scripts */
+	
+	f_Log( "INFO", "Create additional script - UPDATE / REFRESH", section );
+
+	Eval(
+		Substitute(
+				Expr(
+					tblAllTags << NewScript(
+						"Update/Refresh",
+						s_EXPR_UPDATE_REFRESH_UI;
+						s_EXPR_UPDATE_REFRESH_EXTRACT;
+					)
+				),
+			Expr(
+				s_EXPR_UPDATE_REFRESH_UI
+			), Eval Expr( EXPR_UPDATE_REFRESH_UI ),
+			Expr(
+				s_EXPR_UPDATE_REFRESH_EXTRACT
+			), Parse( "EXPR_UPDATE_REFRESH_EXTRACT = Expr( " || Char( Name Expr( EXPR_UPDATE_REFRESH_EXTRACT ) ) || " ); " )
+		)
+	);
+	
+	f_Log( "INFO", "Create additional script - ADD TAGS", section );
+
+	
+	Eval(
+		Substitute(
+				Expr(
+					tblAllTags << NewScript(
+						"Add tags",
+						s_EXPR_ADDTAGS_UI;
+						s_EXPR_ADDTAGS_EXTRACT;
+					)
+				),
+			Expr( s_EXPR_ADDTAGS_UI ), Eval Expr( EXPR_ADDTAGS_UI ),
+			Expr( s_EXPR_ADDTAGS_EXTRACT ), Parse( "EXPR_ADDTAGS_EXTRACT = Expr( " || Char( Name Expr( EXPR_ADDTAGS_EXTRACT ) ) || " ); " )
+		)
+	);
+	
+	f_Log( "INFO", "Create additional script - GUARDBAND", section );
+
+	Eval(
+		Substitute(
+				Expr(
+					tblAllTags << NewScript(
+						"Guardband",
+						s_EXPR_GUARDBAND;
+						s_EXPR_GUARDBAND_RUN;
+
+					)
+				),
+			Expr( s_EXPR_GUARDBAND ), Eval Expr( EXPR_GUARDBAND ),
+			Expr( s_EXPR_GUARDBAND_RUN ), Parse( "EXPR_GUARDBAND_RUN = Expr( " || Char( Name Expr( EXPR_GUARDBAND_RUN ) ) || " ); " ), 
+
+		)
+	);
+	
+	f_Log( "INFO", "Create additional script - ADDITIONAL TOOLS", section );
+
+	Eval(
+		Substitute(
+				Expr(
+					tblAllTags << NewScript(
+						"Additional tools",
+						s_EXPR_DATA_MANIP;
+
+					)
+				),
+			Expr( s_EXPR_DATA_MANIP ),
+				Eval Expr( EXPR_DATA_MANIP )
+
+		)
+	);
+	
+	
+	/* 3.10 Open workflow  */
+	
+	If( strWorkflowPath != "",
+		Open( strWorkflowPath )
+	);
+	
+); // End EXPR_Run_Data_Extration
+
