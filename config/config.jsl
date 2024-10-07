@@ -1,0 +1,110 @@
+﻿/***********************************************************
+ * General Information
+ *
+ * Script Title    : Config
+ * Version         : 2.2
+ *
+ * Description:
+ * This script configurates global parameters
+ *
+ ************************************************************/
+ 
+ /************************************************************/
+/*                   ARCHITECTURE                           */
+/************************************************************/
+/*  1. VERSION                                              */
+/*  2. PATHS                                                */
+/*  	2.1 SAVING REPORTS PATH                             */
+/*  	2.2 SERVERS LIST PATH                               */
+/*  	2.3 USER GUIDE PATH                                 */
+/*  	2.4 GUARDBAND PATH                                  */
+/*  	2.5 USER  WORKFLOW PATH                             */
+/*  	2.6 USER  SCREEN SIZE PATH                          */
+/*  	2.7 USER  SCREEN SIZE PATH                          */
+/*  3. HARD-CODED PARAMETERS                                */
+/************************************************************/
+
+
+
+// --------------------------------- 1. VERSION --------------------------------- //
+ 
+/* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
+ Version = "2024@ V.2.2.0";
+ 
+ 
+ // --------------------------------- 2. PATHS --------------------------------- // 
+
+// =====  2.1  SAVING REPORTS PATH =====  //
+str.PathReport = "$DOCUMENTS" || "\MES Data Retrieval\Reports\";
+If( !Directory Exists( str.PathReport),
+	Create Directory( str.PathReport );
+);
+
+
+// =====  2.2  SERVERS LIST PATH =====  //
+strPathServerlist = "$DOCUMENTS/MES_servers_list.csv";
+
+
+// =====  2.3 USER GUIDE PATH =====  //
+strPathHelpDoc = strPath || "doc/MES Data retrieval - User Guide - OS.pdf"  ;
+
+
+// =====  2.4 GUARDBAND PATH =====  //
+strPathGuardband = "$DOCUMENTS" || "\Guardband\";
+str.path_guardband_recall = strPath || "config/guardband_selection_recall.txt";
+
+
+// =====  2.5 WORKFLOW PATH =====  //
+strWorkflowPath = "";
+
+
+// =====  2.6 USER SCREEN SIZE PATH =====  //
+PathWindowSize = strPath || "config/sizewindow.txt";
+
+If(File Exists(PathWindowSize),
+	Eval( Parse( Load Text File(PathWindowSize) )) ;
+	,
+	w = New Window("Get Window Size...");
+	w << Maximize Window(1);
+	WindowSize = w << Get Window Size();
+	Save Text File(PathWindowSize, "WindowSize = " || Char(WindowSize) );
+	w << Close Window;
+);
+
+// =====  2.7 LAST SERVER SELECTED PATH =====  //
+str.PathLastServerSelected = strPath || "config/LastServerSelected.txt";
+If( File Exists( str.PathLastServerSelected ),
+	Eval( Parse( Load Text File( str.PathLastServerSelected ) ) )
+);
+
+// --------------------------------- 3. HARD-CODED PARAMETERS --------------------------------- //
+
+
+strTableVisibility = "invisible";   // Visibility of temporary tables
+NRow_limit_IP21 = 1e6;				// Max nb of rows per tag for IP21 data extraction
+NRow_limit_PI = 1e6;                // Max nb of rows per tag for PI data extraction
+NRow_limit_preview = 1e6;           // Max nb of rows per tag for preview
+max_n_attempts = 10;				// Maximal number of attempts 
+
+// Possible tag types
+IP21Types = {"Analog", "Discrete", "Text"};
+PITypes = {"R", "I", "D", "S"};
+AllTypes = List();
+Insert Into( AllTypes, IP21Types );
+Insert Into( AllTypes, PITypes );
+IP21NumTags = {"Analog","AI"};
+IP21TextTags = {"Discrete", "Text","DI"};
+PINumTags = {"R", "I"};
+PITextTags = {"D", "S"};
+PreviewTags = {"Discrete", "Text","DI","D", "S","I"};
+
+
+/* List of numerical comparator for filters */
+lst.Comparators = {"=", ">", "<", ">=", "<=",  "In", "Not In", "Like", "Not Like"};
+CompNum = {">", "<", ">=", "<="};
+
+/* List of required columns for report*/
+lst.RequiredReportColumns = {"MES", "SERVER EXTENSION", "SERVER SHORT NAME", "SERVER TYPE", "SERVER EDITED",
+"TAGS", "EXTRACTION METHOD", "PERIOD VALUE", "PERIOD UNIT", "START DATE", "END DATE",
+"FILTERS", "CONDITION FILTERS", "SUMMARY OPTION", "WORKFLOW OPTION"};
+ 
