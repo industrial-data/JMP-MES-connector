@@ -16,8 +16,8 @@
 // Server list path
 //strPathServerlist = "//server/folder/file.csv";
 //strPathServerlist = strPath || "doc/external/MES_servers_list.csv" ;
-strPathServerlist = "//github.com/industrial-data/JMP-MES-connector/blob/main/MES_servers_list.csv";
-//strPathServerlist = "C:/$DOCUMENTS/MES_servers_list.csv";
+//strPathServerlist = "$DOCUMENTS/MES_servers_list.csv";
+strPathServerlist = "https://github.com/industrial-data/JMP-MES-connector/raw/refs/heads/main/MES_servers_list.csv";
 
 // Documentation link
 strPathHelpDoc = strPath || "doc/MES Data retrieval - User Guide - OS.pdf"  ;
