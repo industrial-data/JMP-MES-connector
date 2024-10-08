@@ -42,7 +42,8 @@ If( !Directory Exists( str.PathReport),
 
 
 // =====  2.2  SERVERS LIST PATH =====  //
-strPathServerlist = "$DOCUMENTS/MES_servers_list.csv";
+//strPathServerlist = "$DOCUMENTS/MES_servers_list.csv";
+strPathServerlist = "https://github.com/industrial-data/JMP-MES-connector/raw/refs/heads/main/MES_servers_list.csv";
 
 
 // =====  2.3 USER GUIDE PATH =====  //
