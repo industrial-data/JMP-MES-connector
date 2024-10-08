@@ -91,7 +91,7 @@ Try(
 					Lines To Read( "All" ),
 					Year Rule( "20xx" )
 				),
-				Expr( strTableVisibility )
+				strTableVisibility;
 			)
 		)
 	),
