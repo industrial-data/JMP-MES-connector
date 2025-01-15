@@ -67,6 +67,7 @@ For( i = 1, i <= N Items( lstDependencies ), i++,
 
 // --------------------------------- SERVER LIST --------------------------------- //
 
+strPathServerlist = "https://raw.githubusercontent.com/industrial-data/JMP-MES-connector/refs/heads/main/MES_servers_list.csv";
 
 /* Source file with list of servers */
 Try(
