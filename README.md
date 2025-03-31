@@ -19,7 +19,7 @@ Similar work: [JMP OsiPITools](https://github.com/himanga/JMPOSIPITools), [Tagre
 # Requirements
 
 - JMP v16 or higher
-- Aspen Manufacturing Suite (Aspen InfoPlus.21®) and its 64-bit SQLplus ODBC driver
+- Aspen Manufacturing Execution Systems (Aspen InfoPlus.21®) and the Aspen Dekstop Application. Particularly, you will need to have installed Aspen SQLplus and its 64-bit ODBC driver.
 - OSIsoft PI Client Tools (PI Process Book) and its [PI OLEDB Enterprise driver](https://techsupport.osisoft.com/Products/PI-System-Access/PI-OLEDB-Enterprise/Overview).
 - Hostname and access to the IP21/PI server of interest (usually via Window's active directory)
 - Be connected to your enterprise network (usually via VPN).
