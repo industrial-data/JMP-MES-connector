@@ -791,7 +791,7 @@ EXPR_GUARDBAND_RUN = Expr(
 		
 			With( tbl.guardband_table_selected ),
 			Add columns from Update table( {"LCL", "UCL"} ),
-			Replace columns in main table( "None" )
+			Replace columns in main table( None )
 		
 		);
 		Close( tbl.guardband_table_selected, nosave );
