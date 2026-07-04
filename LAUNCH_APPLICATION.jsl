@@ -63,7 +63,11 @@ Print( "INFO:        Add-in Version - " || Char( Version ) );
 ps_path = Convert File Path( strPath || "doc/external/OLEDB_extract.ps1", windows );
 lstDependencies = Files In Directory( strPath || "include/", "recursive" );
 For( i = 1, i <= N Items( lstDependencies ), i++,
-	Include( strPath || "include/" || lstDependencies[i] )
+	// include/ also holds non-JSL files (notebooks, docs) — only JSL is includable.
+	// Without this filter, Include() fails on Windows with a string path error.
+	If( Ends With( Lowercase( lstDependencies[i] ), ".jsl" ),
+		Include( strPath || "include/" || lstDependencies[i] )
+	)
 );
 
 
