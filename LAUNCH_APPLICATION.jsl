@@ -30,7 +30,9 @@
 
 
 Names Default To Here( 1 );
-Set Preference( Use JMP Locale Settings( 1 ) );
+If( Host is( "Windows" ),
+	Set Preference( Use JMP Locale Settings( 1 ) )
+);
 
 Clear Log();
 Print( "INFO:        START Script IP21PI Data Retrieval at " || Format( Today(), "d/m/y h:m:s" ) );
