@@ -186,7 +186,7 @@ ScreenX = WindowSize[1];
 ScreenY = WindowSize[2];
 /* Never scale above the designed 1536x874 layout: upscaling makes the GUI overflow normal resolutions.
    ScaleGUI shrinks the whole layout further so it fits comfortably on normal resolutions — adjust to taste. */
-ScaleGUI = 0.8;
+ScaleGUI = 0.7;
 RatioX = Min( ScreenX / DevX, 1 ) * ScaleGUI;
 RatioY = Min( ScreenY / DevY, 1 ) * ScaleGUI;
 
@@ -1355,8 +1355,12 @@ If( Or( NewWindowSize[1] != WindowSize[1], NewWindowSize[2] != WindowSize[2] ),
 	Try( Save Text File( PathWindowSize, "WindowSize = " || Char( WindowSize ) ) );
 
 );
-/* The maximize above is only needed to measure the screen; restore so the GUI opens at its natural size */
+/* The maximize above is only needed to measure the screen; restore so the GUI opens at its natural size.
+   On Windows, restoring right after maximizing falls back to a degenerate (minimized-looking) frame,
+   so set an explicit size and position instead of relying on the restored state. */
 WinTag << Maximize Window( 0 );
+WinTag << Size Window( Round( WindowSize[1] * 0.8 ), Round( WindowSize[2] * 0.85 ) );
+WinTag << Move Window( Round( WindowSize[1] * 0.1 ), Round( WindowSize[2] * 0.05 ) );
 
 
 
