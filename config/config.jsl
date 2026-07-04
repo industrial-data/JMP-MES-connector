@@ -2,7 +2,7 @@
  * General Information
  *
  * Script Title    : Config
- * Version         : 2.2
+ * Version         : 2.3
  *
  * Description:
  * This script configurates global parameters
@@ -29,7 +29,7 @@
 // --------------------------------- 1. VERSION --------------------------------- //
  
 /* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
- Version = "2024@ V.2.2.0";
+ Version = "2026@ V.2.3.0";
  
  
  // --------------------------------- 2. PATHS --------------------------------- // 

@@ -184,8 +184,11 @@ DevX = 1536;
 DevY = 874;
 ScreenX = WindowSize[1];
 ScreenY = WindowSize[2];
-RatioX = ScreenX / DevX;
-RatioY = ScreenY / DevY;
+/* Never scale above the designed 1536x874 layout: upscaling makes the GUI overflow normal resolutions.
+   ScaleGUI shrinks the whole layout further so it fits comfortably on normal resolutions — adjust to taste. */
+ScaleGUI = 0.8;
+RatioX = Min( ScreenX / DevX, 1 ) * ScaleGUI;
+RatioY = Min( ScreenY / DevY, 1 ) * ScaleGUI;
 
 // Tab's title
 TitleTab1 = "." || Repeat( " ", 90 * RatioX ) || "Data Extraction Details" || Repeat( " ", 90 * RatioX ) || ".";
@@ -1352,6 +1355,8 @@ If( Or( NewWindowSize[1] != WindowSize[1], NewWindowSize[2] != WindowSize[2] ),
 	Try( Save Text File( PathWindowSize, "WindowSize = " || Char( WindowSize ) ) );
 
 );
+/* The maximize above is only needed to measure the screen; restore so the GUI opens at its natural size */
+WinTag << Maximize Window( 0 );
 
 
 
