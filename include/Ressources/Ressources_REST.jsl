@@ -7,20 +7,21 @@
  * Bridge between JSL and the Python REST extraction layer
  * (include/Ressources/python/mes_connector — see its README.md).
  *
- * v3.0 architecture:
- *  - REST is the DEFAULT transport for both server types.
- *  - IP21 : the legacy SQLplus queries (Ressources_SQL.jsl) are kept
- *           unchanged and POSTed to Aspen's Process Data REST service
- *           (AtProcessDataREST.dll/SQL) instead of going through ODBC.
+ * v3.0 architecture — REST is the ONLY transport (OLEDB/ODBC were removed):
+ *  - IP21 : the proven SQLplus queries (Ressources_SQL.jsl) are POSTed to
+ *           Aspen's Process Data REST service (AtProcessDataREST.dll/SQL).
  *  - PI   : native PI Web API (search / interpolated / recorded / summary),
  *           ported from the validated notebook in Ressources/python.
- *  - The legacy OLEDB/ODBC path remains as a WINDOWS-ONLY fallback when the
- *    REST call fails or no WebAPI URL is configured for the server.
  *
  * Server list requirements (MES_servers_list.xlsx):
- *  - WebAPI_URL : PI  -> https://<host>/piwebapi
+ *  - WebAPI_URL : MANDATORY.
+ *                 PI  -> https://<host>/piwebapi
  *                 IP21-> http://<host>/ProcessData/AtProcessDataREST.dll
- *  - DAServer   : PI  -> Data Archive server name (as in PI System Explorer)
+ *                 (scheme/trailing-slash/missing-path tolerant: the Python
+ *                 layer's normalize_base_url() completes partial addresses,
+ *                 e.g. a bare IP21 host gets /ProcessData/AtProcessDataREST.dll
+ *                 appended — the URL must end up pointing at that .dll)
+ *  - server     : PI  -> Data Archive server name (as in PI System Explorer)
  *                 IP21-> ADSA data source name (usually the IP21 host name)
  *
  * Auth: SSO first (Windows SSPI / Kerberos); on 401 the Python layer raises
@@ -34,15 +35,17 @@
 ******************************************************/
 
 REST_PY_INITIALIZED = 0;
-If( Is Empty( int.UseREST ), int.UseREST = 1 );   // config.jsl can override (0 = force legacy OLEDB)
 If( Is Empty( WebAPIURL ), WebAPIURL = "" );
 If( Is Empty( DAServer ), DAServer = "" );        // = the mandatory "server" field (PI DA / IP21 data source)
 If( Is Empty( PIAFServer ), PIAFServer = "" );    // optional, PI only — reserved for the future AF attribute search
 REST_ChunkSize = 5;                                // tags per Python call; matches the PI worker pool, drives the progress bar
 
-/* REST is used when enabled in config AND the selected server has a WebAPI URL */
-f_REST_Enabled = Function( {},
-	Try( And( int.UseREST == 1, Trim( Char( WebAPIURL ) ) != "" ), 0 )
+/* REST is the only transport: a server without a WebAPI URL cannot be queried */
+f_REST_CheckConfigured = Function( {},
+	If( Trim( Char( WebAPIURL ) ) == "",
+		f_DialogError( "No WebAPI URL configured for this server. Add it in the server list or in 'Edit server address'." )
+	);
+	1;
 );
 
 
@@ -108,7 +111,7 @@ f_REST_Login = Function( {rest_host},
 
     Behavior: runs the code, converts AuthRequired into a login dialog +
     one retry, converts any other python exception into a JSL Throw (so the
-    caller's Try() can fall back to the legacy OLEDB path).
+    caller's Try() can show the appropriate error dialog).
 
     f_REST_PyExec runs the code without fetching a table back (used for the
     chunked extraction steps); f_REST_PyCall additionally returns rest_df as
@@ -415,7 +418,7 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 
 	tblAllTags = f_REST_PyCall( "rest_df = mc.pi_extract_end()" );
 
-	, // On error: close the progress bar, then rethrow to the caller's fallback logic
+	, // On error: close the progress bar, then rethrow to the caller's error handling
 		progress:term();
 		Throw( "REST: PI Web API extraction failed (see log)" );
 	);

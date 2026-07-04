@@ -1,9 +1,9 @@
 # mes_connector — Python extraction layer (v3.0)
 
 Python package called by the JMP add-in (via JMP 19's embedded Python) to extract
-historian data over REST instead of ODBC/OLEDB drivers. REST is the **default**
-path; the legacy OLEDB/ODBC path remains as a **Windows-only fallback** (see
-`include/Ressources_REST.jsl` for the dispatch logic on the JSL side).
+historian data over REST. REST is the **only** transport — the legacy OLEDB
+(PI PowerShell) and ODBC (IP21 driver) paths were removed in v3.0, so no driver
+installs are needed and Windows/macOS behave identically.
 
 ## Architecture (read this first, agents)
 
@@ -45,10 +45,11 @@ Ressources_REST.jsl
 
 `MES_servers_list.xlsx` columns: `site` (optional display name, falls back to
 the server name), `server` (MANDATORY — PI Data Archive name or IP21 ADSA data
-source name; also used as network node by the OLEDB fallback), `Type`
-(PI | IP21), `WebAPI_URL` (optional — empty means OLEDB/SQLplus fallback,
-Windows only; tolerant to missing scheme and trailing `/`, see
-`normalize_base_url`), `PI_AF_Server` (optional, PI only — future AF search).
+source name), `Type` (PI | IP21), `WebAPI_URL` (MANDATORY — tolerant to missing
+scheme and trailing `/`; a bare host is completed to `/piwebapi` or
+`/ProcessData/AtProcessDataREST.dll` by `normalize_base_url`; the IP21 URL must
+end up pointing at that .dll), `PI_AF_Server` (optional, PI only — future AF
+search).
 
 ## Debugging
 

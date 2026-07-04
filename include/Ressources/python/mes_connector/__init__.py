@@ -70,17 +70,13 @@ def normalize_base_url(server_type: str, url: str) -> str:
 
 
 def test_connection(server_type: str, base_url: str, da_server: str) -> str:
-    """Cheap round-trip to verify the REST endpoint answers.
-
-    Returns "OK" (JSL checks for this literal) or raises. Used by the JSL
-    dispatcher to decide REST vs the Windows OLEDB fallback.
-    """
+    """Cheap round-trip to verify the REST endpoint answers ("OK" or raises)."""
     base = normalize_base_url(server_type, base_url)
     if server_type == "PI":
         _pi._dataserver_webid(base, da_server)
     else:
         _ip21.browse(base, da_server, tag_wildcard="*", max_tags=1)
-    return "OK"
+    return "OK"  # JSL checks for this literal
 
 
 def search_tags(server_type: str, base_url: str, da_server: str,

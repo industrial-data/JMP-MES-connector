@@ -60,7 +60,6 @@ Print( "INFO:        Add-in Version - " || Char( Version ) );
 
 
 /* Source dependencies files needed */
-ps_path = Convert File Path( strPath || "doc/external/OLEDB_extract.ps1", windows );
 lstDependencies = Files In Directory( strPath || "include/", "recursive" );
 For( i = 1, i <= N Items( lstDependencies ), i++,
 	// v3.0: include/ also holds the Python package (.py/.md) — only JSL files are includable
@@ -113,13 +112,13 @@ If( N Rows( dt_MES_servers ) == 0,
 	f_DialogError( "Empty servers list" )
 );
 
-/* v3.0 simplified server list schema:
+/* v3.0 simplified server list schema (REST is the only transport):
      site        - optional display name (falls back to the server name)
      server      - MANDATORY: PI Data Archive name or IP21 data source name
      Type        - "PI" or "IP21"
-     WebAPI_URL  - optional: PI Web API / Aspen REST address. Empty -> the
-                   add-in falls back to OLEDB/SQLplus drivers (Windows only).
-                   Tolerant to missing scheme and trailing '/'.
+     WebAPI_URL  - MANDATORY: PI Web API / Aspen ProcessData REST address.
+                   Tolerant to missing scheme and trailing '/'; a bare host is
+                   completed to /piwebapi or /ProcessData/AtProcessDataREST.dll.
      PI_AF_Server- optional, PI only: AF server for the future attribute search.
    Ensure the optional columns exist even if the file omits them. */
 lstServerCols = dt_MES_servers << Get Column Names( "String" );
@@ -315,10 +314,12 @@ WinTag = New Window( "IP21PI Data Retrieval",
 											Widths( {120 * RatioX, 200 * RatioY} ),
 											panel_ServerAdress = Outline Box( "Server details",
 												Panel Box( "",
-													/* v3.0 simplified server details:
+													/* v3.0 simplified server details (REST is the only transport):
 													   - Server name (mandatory): PI DA server / IP21 data source
-													   - WebAPI URL (optional): empty -> OLEDB/SQLplus fallback.
-													     Accepted with or without https:// and trailing '/'.
+													   - WebAPI URL (mandatory): PI Web API or Aspen ProcessData
+													     REST address. Accepted with or without https:// and
+													     trailing '/'; a bare host is completed to /piwebapi or
+													     /ProcessData/AtProcessDataREST.dll automatically.
 													   - PI AF server (optional, PI only): reserved for the future
 													     AF attribute search (collapsible element hierarchy). */
 													Lineup Box( N Col( 2 ),

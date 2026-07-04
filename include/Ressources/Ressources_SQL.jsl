@@ -1,17 +1,23 @@
 /***********************************************************
  * General Information
  *
- * Script Title    : Ressources SQL
+ * Script Title    : Ressources SQL (v3.0 — REST only)
  *
  * Description:
- * This script contains a collection of pre-defined SQL queries for querying data from both IP21 and PI servers.
- * It provides resources for filtering tags, extracting data, and searching for tag types.
- * Additionally, it includes utility functions that utilize these SQL queries.
+ * IP21 SQLplus queries and the query-level helper functions of the add-in.
  *
- * Usage:
- * - Import and run this script in JMP to access the SQL queries and utility functions.
- *
- * For more information, refer to the function documentation within this script.
+ * v3.0: the ONLY transport is REST.
+ *  - IP21 : the SQLplus queries below are sent to Aspen's Process Data REST
+ *           service (http://<host>/ProcessData/AtProcessDataREST.dll/SQL)
+ *           through f_IP21_REST_SQL (Ressources_REST.jsl -> Python).
+ *           The base URL must point at the .dll; mes_connector's
+ *           normalize_base_url() appends /ProcessData/AtProcessDataREST.dll
+ *           when the user only typed the host.
+ *  - PI   : no SQL at all — everything goes through the PI Web API
+ *           (f_REST_FindTags / f_REST_PI_TagType / f_REST_PI_Preview /
+ *           f_RunExtraction_PI_REST). PI filters are handled by the Python
+ *           layer (filterExpression / pandas), see mes_connector/filters.py.
+ * The legacy OLEDB (PI PowerShell) and ODBC (IP21 driver) paths were removed.
  ************************************************************/
 
 /***********************************************************
@@ -19,72 +25,15 @@
  ************************************************************/
 
 /****************************************************
- *  I. CONNECTION TO DATABASE
- *  II. SQL QUERIES 
- *  III. UTILITY FUNCTIONS
+ *  I. IP21 SQL QUERIES
+ *  II. QUERY FUNCTIONS (REST transport)
+ *  III. IP21 FILTER BUILDERS
  ****************************************************/
 
 
-
 /****************************************************
-*  I. CONNECTION TO DATABASE
+*  I. IP21 SQL QUERIES
 ******************************************************/
-
-
-/*
-Description:
-This PowerShell script, named SQL_OLEDB_PS, serves as a utility for establishing a connection to a database using the PIOLEDB driver. 
-It defines various objects and settings for executing SQL queries and retrieving data from the specified data source.
-
-Key Elements:
-- It sets up an OleDbConnection object to establish the database connection.
-- An OleDbCommand object is used to define and execute SQL queries.
-- An OleDbDataAdapter object is employed to retrieve data from the executed query.
-- It is versioned with a hard-coded version string "2022-01-25".
-
-For more information about the PIOLEDB driver and connection string, refer to the provided documentation link.
-*/
-
-
-ps_hard_code_version = "2022-01-25";
-
-
-// PIOLEDB DOC
-// Conneciton string
-// https://livelibrary.osisoft.com/LiveLibrary/content/en/oledb-pro-v3/GUID-D747F282-2206-48F5-8FE2-724418728A06
-
-SQL_OLEDB_PS =
-"\[# ver=2022-01-25
-# The comment above is used to later reset this file, do not modify it
-$OleDbConn = New-Object "System.Data.OleDb.OleDbConnection";
-$OleDbCmd = New-Object "System.Data.OleDb.OleDbCommand";
-$OleDbAdapter = New-Object "System.Data.OleDb.OleDbDataAdapter";
-$DataTable = New-Object "System.Data.DataTable";
-
-$OleDbConn.ConnectionString = "Provider=PIOLEDB.1;Data Source=$($args[0]);Integrated Security=SSPI;Persist Security Info=False;Session ID=-1;Sync Calls=True;Time Zone = Server;Command Timeout=1000;";
-$OleDbCmd.Connection = $OleDbConn;
-$OleDbCmd.CommandText = "$($args[1])";
-
-$OleDbAdapter.SelectCommand = $OleDbCmd;
-
-$OleDbConn.Open();
-$OleDbAdapter.Fill($DataTable) >$null| Out-Null;
-
-$DataTable | ConvertTo-Csv -NoTypeInformation
-
-$OleDbConn.Close();]\";
-
-// Connexion to the MES server
-__SQL_MES_CONNECTION = "DRIVER={AspenTech SQLplus};HOST=VAR_MES;PORT=10014;MAXROWS=1000000";
-
-
-
-/****************************************************
-*  II. SQL QUERIES
-******************************************************/
-
-
-//IP21 -----------------------------------------------------------------------------------------
 
 // SQL Query to Find Tags in IP21
 __SQL_FINDTAGS_IP21 =
@@ -107,13 +56,13 @@ __SQL_EXTRACTAGS_IP21 =
 						T1.name->ip_description as DESCR,
 						T1.name->ip_eng_units as EU,
 						T1.name->ip_tag_type as TAGTYPE
-						FROM  VAR_TABLE T1 
-						VAR_FILTER 
-						WHERE ((REQUEST = VAR_REQUEST)  
+						FROM  VAR_TABLE T1
+						VAR_FILTER
+						WHERE ((REQUEST = VAR_REQUEST)
 						AND (PERIOD = VAR_PERIOD)
 						AND T1.VALUE NOT IN ('??????')
-						AND ( NAME IN  ('VAR_TAGNAME'))  
-						AND ((T1.TS >='VAR_START_DATE') 
+						AND ( NAME IN  ('VAR_TAGNAME'))
+						AND ((T1.TS >='VAR_START_DATE')
 						AND (T1.TS <= 'VAR_END_DATE')));";
 
 
@@ -128,263 +77,94 @@ __SQL_DISTINCT_VALUES_PREVIEW_IP21 =
 								T1.NAME WIDTH 80,
 								T1.name-> ip_tag_type as TAGTYPE,
 								VALUE
-								FROM HISTORY(80)  T1 
+								FROM HISTORY(80)  T1
 								VAR_FILTER
-								WHERE ((REQUEST = VAR_REQUEST)  
+								WHERE ((REQUEST = VAR_REQUEST)
 								AND (PERIOD = VAR_PERIOD)
-								AND ( NAME IN  ('VAR_TAGNAME'))  
-								AND ((T1.TS >='VAR_START_DATE') 
+								AND ( NAME IN  ('VAR_TAGNAME'))
+								AND ((T1.TS >='VAR_START_DATE')
 								AND (T1.TS <= 'VAR_END_DATE')
 								AND TAGTYPE IN ('Text','Discrete')));";
-								
-								
-//PI -----------------------------------------------------------------------------------------
-
-
-// SQL Query to Find Tags in PI
-__SQL_FINDTAGS_PI =
-"SELECT tag as tagnames, descriptor as descriptions, engunits as units, pointtype as type FROM [pipoint]..[pipoint] WHERE tag LIKE '%VAR_TAGNAME%' AND descriptor LIKE '%VAR_DESCRIPTION%';";
-
-// SQL Query to Get Local Time in PI
-__SQL_LOCAL_TIME_PI = "SELECT format(date('*'), 'yyyy-MM-dd HH:mm:ss') as ServerDateTime";
-
-
-// SQL Query to Extract Tags Data from PI
-__SQL_EXTRACTAGS_PI =
-"SELECT C1.TAG AS NAME,FORMAT(C1.TIME, 'yyyy-MM-dd HH:mm:ss') AS TS,FORMAT(C1.__UTCTIME, 'yyyy-MM-dd HH:mm:ss') AS TS_UTC, CASE P1.POINTTYPE WHEN 'D' THEN DIGSTRING(CAST(C1.VALUE AS INT32)) ELSE CAST(C1.VALUE AS STRING) END AS VALUE,P1.DESCRIPTOR AS DESCR,P1.ENGUNITS AS EU,P1.POINTTYPE AS TAGTYPE FROM [PIPOINT]..[PIPOINT] P1,[PIARCHIVE]..[VAR_TABLE] C1 VAR_FILTER WHERE P1.TAG = 'VAR_TAGNAME' AND C1.TAG = P1.TAG AND C1.TIME BETWEEN 'VAR_START_DATE' AND 'VAR_END_DATE' VAR_PERIOD";
-
-// SQL Query to Get Tag Type in PI
-__SQL_TAGTYPE_PI = "SELECT pointtype as tagtype FROM [pipoint]..[pipoint] WHERE tag = 'VAR_TAGNAME'";
-
-// SQL Query for Distinct Values Preview in PI
-__SQL_DISTINCT_VALUES_PREVIEW_PI =
-"SELECT DISTINCT C1.TAG AS NAME, CASE P1.POINTTYPE WHEN 'D' THEN DIGSTRING(CAST(C1.VALUE AS INT32)) ELSE CAST(C1.VALUE AS STRING) END AS VALUE FROM [PIPOINT]..[PIPOINT] P1,[PIARCHIVE]..[PIINTERP2] C1 VAR_FILTER WHERE P1.TAG = 'VAR_TAGNAME'  AND C1.TAG = P1.TAG AND C1.TIME BETWEEN 'VAR_START_DATE' AND 'VAR_END_DATE' VAR_PERIOD AND P1.POINTTYPE != 'R'";
 
 
 /****************************************************
-*  III. UTILITY FUNCTIONS
+*  II. QUERY FUNCTIONS (REST transport)
 ******************************************************/
 
 
 /*
     f_SQL_FINDTAGS Function
 
-    This function retrieves a list of available tags based on filtering criteria, including tag name, tag description.
+    Retrieves the available tags matching the name/description filters.
+    PI  -> PI Web API point search; IP21 -> __SQL_FINDTAGS_IP21 over REST.
+    (Both are handled inside f_REST_FindTags, Ressources_REST.jsl.)
 
     @param TagName: Name filter (character).
     @param TagDescription: Description filter (character).
     @param ServerType: Server Type (IP21/PI).
 
+    @return A JMP table with columns tagnames / descriptions / units / type (+ path).
 */
 f_SQL_FINDTAGS = Function( {TagName, TagDescription, ServerType},
 
-	/* v3.0: REST is the default transport. On failure, fall back to the
-	   legacy OLEDB/ODBC path below — Windows only (drivers required). */
-	If( f_REST_Enabled(),
-		dt_TagTable = Try( f_REST_FindTags( TagName, TagDescription ), Empty() );
-		If( !Is Empty( dt_TagTable ),
-			If( N Rows( dt_TagTable ) == 0,
-				Close( dt_TagTable, nosave );
-				f_DialogError( "No matching data" );
-			);
-			Return( dt_TagTable );
-		);
-		f_Log( "WARNING", "REST tag search failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
-		If( !Host is( "Windows" ),
-			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." )
-		);
+	f_REST_CheckConfigured();
+
+	dt_TagTable = Try(
+		f_REST_FindTags( TagName, TagDescription ),
+		f_DialogError( "Server connection failed (see log for the request URLs)" )
 	);
 
-	If( ServerType == "IP21",
-	
-	// IP21  ---------------------------
-	
-		// Connection to the MES server
-		SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
-		Try(
-			dbc = Create Database Connection( SQL_connection_str ),
-			Close Database Connection( dbc );
-			f_DialogError( "Server connection failed" );
-		);
-		// SQL Query to filter tags
-		SQL_FindTag = Substitute( __SQL_FINDTAGS_IP21, "VAR_TAGNAME", TagName, "VAR_DESCRIPTION", TagDescription );
-		f_Log( "INFO", "<SQL Query>  \!n\!n" || SQL_FindTag || "\!n\!n" );
-		
-		// Query the database
-		Try(
-			dt_TagTable = Execute SQL( dbc, SQL_FindTag, invisible );
-			dt_TagTable << SetName( "f_SQL_FINDTAGS Results" );
-		,
-			Try( Close( dt_TagTable, nosave ) );
-			f_DialogError( "No tags found" );
-		);
-		// Close connexion with Database
-		Close Database Connection( dbc );
-		
-	, 
-		
-	// PI ----------------------------------
-	
-		SQL_FindTag = Substitute( __SQL_FINDTAGS_PI, "VAR_TAGNAME", TagName, "VAR_DESCRIPTION", TagDescription );
-	
-		// Execute the query SQL_FilterTag via f_Convert_In_PowershellScript function (see Ressources_utilities)
-		query_tags = f_Convert_In_PowershellScript( ps_path, NetworkNode, SQL_FindTag );
-		
-		// Create JMP Table with the tags available after filters
-		Try(
-			dt_TagTable = Open( query_tags, "text", invisible );
-			dt_TagTable << SetName( "f_SQL_FINDTAGS Results" );
-		, 
-		// If error : Tag columns does not exist
-			Try( Close( dt_TagTable, nosave ) );
-			f_DialogError( "No tags found" );
-		); 
-	
-		// If the result if ok , we should have 3 columns in the table: tagnames, descriptions, units
-		If( N Items( dt_TagTable << Get column names() ) < 3, 
-		// If error : Tag columns does not exist
-			Try( Close( dt_TagTable, nosave ) );
-			f_DialogError( "No tags found" );
-		
-		);
+	If( N Rows( dt_TagTable ) == 0,
+		Close( dt_TagTable, nosave );
+		f_DialogError( "No matching data" );
 	);
-	
 
-	// Check if the table is empty
-	Try(
-		If( N Row( dt_TagTable ) == 0,
-			Close( dt_TagTable, nosave );
-			f_DialogError( "No matching data" );
-		)
-	,
-		f_DialogError( "No tags found" )
-	);
-	
-	// Return JMP table with tags found
 	Return( dt_TagTable );
-	
 );
 
 
 /*
     f_SQL_GET_LOCALTIME Function
 
-    This function retrieves the local server time for the specified server.
+    v3.0: returns the client clock. The server clock was only used to pre-fill
+    the date pickers; a REST round-trip is not worth it for that.
 
-    @param ServerType: The server type (IP21 or PI).
-
-    @return The local server time.
+    @param ServerType: The server type (IP21 or PI) — kept for call-site compatibility.
 */
-
 f_SQL_GET_LOCALTIME = Function( {ServerType},
-
-	/* v3.0 REST path: use the client clock. The server clock was only used to
-	   pre-fill the date pickers; client time is close enough there, and it
-	   avoids one more REST round-trip. The OLEDB fallback keeps querying the
-	   server clock as before. */
-	If( f_REST_Enabled(),
-		Return( Today() )
-	);
-
-	If( ServerType == "IP21",
-	
-	// IP21  ---------------------------
-	
-		// Connection to the MES server
-		SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
-		Try(
-			dbc = Create Database Connection( SQL_connection_str ),
-			Close Database Connection( dbc );
-			f_DialogError( "Server connection failed" );
-		);
-	
-		local_time_utz_TZ = Execute SQL( dbc, "WRITE Local_ISO8601(GETDBTIME);" );
-		<<Run;
-		
-		Close Database Connection( dbc );
-		f_Log( "INFO", "Local server time - " || Char( Format( local_time_utz_TZ, "yyyy-mm-ddThh:mm:ss" ) ) );
-		
-	, 
-		
-	// PI  ---------------------------
-	
-		query_result = f_Convert_In_PowershellScript( ps_path, NetworkNode, __SQL_LOCAL_TIME_PI ); //'yyyy-MM-dd HH:mm:ss'
-		dt_server_local_time = Open( query_result, "text", invisible );
-		dt_server_local_time << SetName( "f_SQL_GET_LOCALTIME Results" );
-
-		// If the result if ok , we should have 1 column in the table: ServerDateTime
-		If( N Items( dt_server_local_time << Get column names() ) != 1, 
-		// If error : Tag columns does not exist
-			Try( Close( dt_server_local_time, nosave ) );
-			f_DialogError( "Server connection failed" );
-
-		);
-	
-		// Get local server time 
-		Try(
-			local_time_utz_TZ = Column( dt_server_local_time, "ServerDateTime" )[1],
-			f_DialogError( "Server connection failed" );
-		);
-		
-		Close( dt_server_local_time, nosave );
-		
-		f_Log( "INFO", "Local server time:" || Char( Format( local_time_utz_TZ, "yyyy-mm-ddThh:mm:ss" ) ) );
-	);
-	
-	Return( local_time_utz_TZ );
+	Return( Today() )
 );
-
 
 
 /*
     f_SQL_EXTRACT_TAGS Function
 
-    This function is used to extract data from selected tags within a specified server and time range and with optional filters, 
-    based on the server type (IP21 or PI).
+    Builds the IP21 extraction SQL (sent over REST by f_RunExtraction).
+    PI never reaches this function: PI extraction is fully handled by
+    f_RunExtraction_PI_REST.
 
-    @param StartFormat: Date of the start of extraction (character, Date in UTC format).
-    @param EndFormat: Date of the end of extraction (character, Date in UTC format).
-    @param Filter: Filters to be applied.
-    @param ServerType: The server type (IP21 or PI).
-
+    @param Start / End: extraction window (character, server time).
+    @param Filter: SQL filter fragment from f_SQL_CREATE_ALL_FILTERS.
+    @param ServerType: must be "IP21".
 */
-f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType}, 
+f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 
-	If( ServerType == "IP21", 
-		
-	// IP21 ----------------------------------
-		
-		__SQL_EXTRACTION = Substitute( __SQL_EXTRACTAGS_IP21,
-			"VAR_VALUE", ValueIP21,
-			"VAR_TABLE", TableIP21,
-			"VAR_FILTER", Filter,
-			"VAR_REQUEST", Char( Request ),
-			"VAR_PERIOD", Char( NewPeriodNumValue ),
-			"VAR_START_DATE", StartFormat,
-			"VAR_END_DATE", EndFormat
-		);
-		
-		If(ValueIP21 == "AVG",
-			__SQL_EXTRACTION = Substitute( __SQL_EXTRACTION,"AND T1.VALUE NOT IN ('??????')","")
-		);
-		
-		f_Log( "INFO", "<SQL Query> \!n\!n" || __SQL_EXTRACTION || "\!n\!n" );
-		
-	, 
-	
-	// PI ----------------------------------
-		
-		__SQL_EXTRACTION = Substitute( __SQL_EXTRACTAGS_PI,
-			"VAR_TABLE", TablePI,
-			"VAR_FILTER", Filter,
-			"VAR_START_DATE", StartFormat,
-			"VAR_END_DATE", EndFormat,
-			"VAR_PERIOD", SQL_InterpolatedPI
-		);
-		
+	__SQL_EXTRACTION = Substitute( __SQL_EXTRACTAGS_IP21,
+		"VAR_VALUE", ValueIP21,
+		"VAR_TABLE", TableIP21,
+		"VAR_FILTER", Filter,
+		"VAR_REQUEST", Char( Request ),
+		"VAR_PERIOD", Char( NewPeriodNumValue ),
+		"VAR_START_DATE", StartFormat,
+		"VAR_END_DATE", EndFormat
 	);
-	
-	
+
+	If( ValueIP21 == "AVG",
+		__SQL_EXTRACTION = Substitute( __SQL_EXTRACTION, "AND T1.VALUE NOT IN ('??????')", "" )
+	);
+
+	f_Log( "INFO", "<SQL Query> \!n\!n" || __SQL_EXTRACTION || "\!n\!n" );
+
 	Return( __SQL_EXTRACTION );
 );
 
@@ -392,7 +172,7 @@ f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 /*
     f_SQL_GET_TAGTYPE Function
 
-    This function retrieves the tag type for a given tag name (without unit/description) based on the specified server type (IP21 or PI).
+    Tag type for one tag. PI -> Web API point search; IP21 -> SQL over REST.
 
     @param Tag: The tag name without unit/description (character).
     @param ServerType: The server type (IP21 or PI).
@@ -401,143 +181,60 @@ f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 */
 f_SQL_GET_TAGTYPE = Function( {Tag, ServerType},
 
-	/* v3.0: REST first. IP21 reuses the legacy SQL over REST; PI asks the
-	   Web API point search. Fallback to OLEDB/ODBC on Windows. */
-	If( f_REST_Enabled(),
-		If( ServerType == "IP21",
-			TagTypeRslt = Try(
-				dt_rest_type = f_IP21_REST_SQL( Substitute( __SQL_TAGTYPE_IP21, "VAR_TAGNAME", Tag ) );
-				rslt = Column( dt_rest_type, "tagtype" )[1];
-				Close( dt_rest_type, nosave );
-				rslt;
-			, Empty() )
+	f_REST_CheckConfigured();
+
+	If( ServerType == "PI",
+		TagTypeRslt = Try(
+			f_REST_PI_TagType( Tag ),
+			f_DialogError( "No tagtype found" )
+		)
+	,
+		SQL_tag = Substitute( __SQL_TAGTYPE_IP21, "VAR_TAGNAME", Tag );
+		dt_tagtable = Try(
+			f_IP21_REST_SQL( SQL_tag ),
+			f_DialogError( "No tags found" )
+		);
+		Try(
+			If( N Items( dt_tagtable << Get column names() ) != 1,
+				Close( dt_tagtable, "NoSave" );
+				f_DialogError( "No tags found" );
+			)
 		,
-			TagTypeRslt = Try( f_REST_PI_TagType( Tag ), Empty() )
+			Close( dt_tagtable, "NoSave" );
+			f_DialogError( "No tags found" );
 		);
-		If( !Is Empty( TagTypeRslt ),
-			If( Is Missing( TagTypeRslt ), f_DialogError( "No tagtype found" ) );
-			Return( TagTypeRslt );
-		);
-		f_Log( "WARNING", "REST tagtype lookup failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
-		If( !Host is( "Windows" ),
-			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." )
-		);
+		TagTypeRslt = Column( dt_tagtable, "tagtype" )[1];
+		Close( dt_tagtable, "NoSave" );
 	);
 
-	If( ServerType == "IP21",
-	
-	// IP21 ----------------------------------
-	
-		// Connection to the MES server
-		SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
-		Try(
-			dbc = Create Database Connection( SQL_connection_str ),
-			Close Database Connection( dbc );
-			f_DialogError( "Server connection failed" );
-		);
-	
-		// SQL Query
-		SQL_tag = Substitute( __SQL_TAGTYPE_IP21, "VAR_TAGNAME", Tag );
-		f_Log( "INFO", "<SQL Query> \!n\!n" || SQL_tag || "\!n\!n" );
-		
-		// Send Query to DB	
-		dt_tagtable = Eval( Eval Expr( Execute SQL( dbc, SQL_tag, Expr( strTableVisibility ) ) ) );
-		dt_tagtable << SetName( "f_SQL_GET_TAGTYPE Results" );
-		
-		Close Database Connection( dbc );
-	
-	, 
-	
-	// PI ----------------------------------
-	
-		SQL_tag = Substitute( __SQL_TAGTYPE_PI, "VAR_TAGNAME", Tag );
-			
-		query_tags = f_Convert_In_PowershellScript( ps_path, NetworkNode, SQL_tag );
-			
-		Try( dt_tagtable = Open( query_tags, "text", invisible ), f_DialogError( "No tags found" ) );
-		dt_tagtable << SetName( "f_SQL_GET_TAGTYPE Results" );
-	
-		
-	
-	);
-	
-	// Check if the output table from the SQL query had 1 colum, : tagtype
-	Try( If( N Items( dt_tagtable << Get column names() ) != 1, Close( dt_tagtable, "NoSave" );f_DialogError( "No tags found" ) ), Close( dt_tagtable, "NoSave" );f_DialogError( "No tags found" ) );
-	TagTypeRslt = Column( dt_tagtable, "tagtype" )[1];
 	If( Is Missing( TagTypeRslt ),
-		Close( dt_tagtable, "NoSave" );
 		f_DialogError( "No tagtype found" )
 	);
-	Close( dt_tagtable, "NoSave" );
-	
-	Return( TagTypeRslt );
-);	
 
+	Return( TagTypeRslt );
+);
 
 
 /*
     f_SQL_PREVIEW Function
 
-    This function is used in preview to retrieve distinct values for a tag given a specific time period and optional filters, 
-    based on the specified server type (IP21 or PI).
-
+    Distinct values of one tag over the selected window (Preview button).
+    IP21 -> DISTINCT SQL over REST (filters included, server-side).
+    PI   -> PI Web API distinct values (registered filters are NOT applied in
+            the preview — they are applied at extraction time).
 
     @param TagName: Tag to preview without unit/description (character).
-    @param Start: Start date in UTC (character).
-    @param End: End date in UTC (character).
-    @param Filters: Filters to apply.
+    @param Start / End: window (character, server time).
+    @param Filters: SQL filter fragment (IP21 only).
     @param ServerType: The server type (IP21 or PI).
 
-    @return A JMP DataTable with the distinct values of the tagnames for the specified start/end time and filters selected.
+    @return A JMP DataTable with the distinct values.
 */
 f_SQL_PREVIEW = Function( {TagName, Start, End, Filters, ServerType},
 
-	/* v3.0: REST first. IP21 reuses the legacy DISTINCT SQL over REST
-	   (filters included, server-side); PI lists distinct values via the Web
-	   API (registered filters not applied in preview — extraction applies
-	   them). Fallback to OLEDB/ODBC on Windows. */
-	If( f_REST_Enabled(),
-		If( ServerType == "IP21",
-			SQL_tag = Substitute( __SQL_DISTINCT_VALUES_PREVIEW_IP21,
-				"VAR_FILTER", Filters,
-				"VAR_REQUEST", Char( Request ),
-				"VAR_PERIOD", Char( NewPeriodNumValue ),
-				"VAR_TAGNAME", TagName,
-				"VAR_START_DATE", Start,
-				"VAR_END_DATE", End
-			);
-			dt_tagtable = Try( f_IP21_REST_SQL( SQL_tag ), Empty() );
-		,
-			dt_tagtable = Try( f_REST_PI_Preview( TagName, Start, End ), Empty() )
-		);
-		If( !Is Empty( dt_tagtable ),
-			If( N Rows( dt_tagtable ) == 0,
-				Close( dt_tagtable, nosave );
-				Try( PreviewWindow << close window() );
-				f_DialogError( "No matching data" );
-			);
-			Return( dt_tagtable );
-		);
-		f_Log( "WARNING", "REST preview failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
-		If( !Host is( "Windows" ),
-			Try( PreviewWindow << close window() );
-			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." );
-		);
-	);
+	f_REST_CheckConfigured();
 
 	If( ServerType == "IP21",
-	
-	// IP21 ----------------------------------
-	
-		// Connection to the MES server
-		SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
-		Try(
-			dbc = Create Database Connection( SQL_connection_str ),
-			Close Database Connection( dbc );
-			f_DialogError( "Server connection failed" );
-		);
-		
-		// SQL Query
 		SQL_tag = Substitute( __SQL_DISTINCT_VALUES_PREVIEW_IP21,
 			"VAR_FILTER", Filters,
 			"VAR_REQUEST", Char( Request ),
@@ -546,153 +243,83 @@ f_SQL_PREVIEW = Function( {TagName, Start, End, Filters, ServerType},
 			"VAR_START_DATE", Start,
 			"VAR_END_DATE", End
 		);
-		
 		f_Log( "INFO", "<SQL Query>\!n\!n" || SQL_tag );
-		
-		// Send Query to DB	
-		dt_tagtable = Eval( Eval Expr( Execute SQL( dbc, SQL_tag, Expr( strTableVisibility ) ) ) );
-		
-	
-		// If the result if ok , we should have 3 columns in the table: NAME, VALUE, TAGTYPE
-		Try(
-			If( N Items( dt_tagtable << Get column names() ) < 3;
-			dt_tagtable << SetName( "f_SQL_PREVIEW Results" );
-			, 
-
-		// If error : Tag columns does not exist
-				Try( Close( dt_tagtable, nosave ) );
-				f_DialogError( "Server connection failed" );
-		
-			)
-		, 
-		// If error : Tag columns does not exist
-			Try( Close( dt_tagtable, nosave ) );
-			f_DialogError( "Server connection failed" );
+		dt_tagtable = Try(
+			f_IP21_REST_SQL( SQL_tag ),
+			Try( PreviewWindow << close window() );
+			f_DialogError( "No matching data" );
 		);
-	
-		Close Database Connection( dbc );
-	
-	, 
-	
-	// PI ----------------------------------
-	
-		// SQL Query
-		SQL_tag = Substitute( __SQL_DISTINCT_VALUES_PREVIEW_PI,
-			"VAR_FILTER", Filters,
-			"VAR_TAGNAME", TagName,
-			"VAR_START_DATE", Start,
-			"VAR_END_DATE", End,
-			"VAR_PERIOD", SQL_InterpolatedPI
-		);
-		
-		// Send Query to DB	
-		query_tags = f_Convert_In_PowershellScript( ps_path, NetworkNode, SQL_tag );
-	
-		Try(
-			dt_tagtable = Open( query_tags, "text", invisible );
-			dt_tagtable << SetName( "f_SQL_PREVIEW Results" );
-			,
-			Try(PreviewWindow << close window());
+	,
+		dt_tagtable = Try(
+			f_REST_PI_Preview( TagName, Start, End ),
+			Try( PreviewWindow << close window() );
 			f_DialogError( "No matching data" );
 		);
 	);
-	
+	dt_tagtable << Set Name( "f_SQL_PREVIEW Results" );
+
 	If( N Rows( dt_tagtable ) == 0,
 		Close( dt_tagtable, nosave );
-		Try(PreviewWindow << close window());
+		Try( PreviewWindow << close window() );
 		f_DialogError( "No matching data" );
 	);
-	
-	Return( dt_tagtable );
-);	
 
+	Return( dt_tagtable );
+);
+
+
+/****************************************************
+*  III. IP21 FILTER BUILDERS
+******************************************************/
 
 /*
     f_SQL_CREATE_ALL_FILTERS Function
 
-    This function is used to build filters in SQL syntax based on an associative array of filters to apply, 
-    along with the specified condition (OR or AND) and server type (IP21 or PI).
+    Builds the IP21 SQL filter fragment from the registered filters.
+    PI returns " " immediately: PI filters are translated by the Python layer
+    (filterExpression / pandas), not by SQL.
 
-	@param StartFormat: Start date in yyyy-mm-ddThh:mm:ss
-	@param EndFormat: End date in yyyy-mm-ddThh:mm:ss
-    @param Filters: An associative array with filters to apply.
-    @param Condition: The condition to use (OR or AND).
+	@param StartFormat / EndFormat: window in yyyy-mm-ddThh:mm:ss
+    @param Filters: Associative array with filters to apply.
+    @param Condition: "OR" or "AND".
     @param ServerType: The server type (IP21 or PI).
 
-    @return A string with the SQL query representing the combined filters.
+    @return A string with the SQL fragment representing the combined filters.
 */
-f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition, ServerType}, 
-	
-	// IP1 SQL syntax -----------------------------------------------
-		
+f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition, ServerType},
+
+	// PI filters live in the Python layer — nothing to build here
+	If( ServerType == "PI",
+		Return( " " )
+	);
+
 	// Extern structure with all GS
 	__SQL_EXT_STRUCT_UNIONIP21 = " INNER JOIN ( VAR_ALL_GS ) AS FILTERS ON T1.TS = FILTERS.TS ";
 	__SQL_EXT_STRUCT_JOINIP21 = " VAR_ALL_GS ";
-		
+
 	// Intern structure with 1 GS
 	__SQL_INT_STRUCT_UNIONIP21 = " VAR_GS ";
 	__SQL_INT_STRUCT_JOINIP21 = " INNER JOIN ( VAR_GS ) AS VAR_PREFIX ON VAR_PREFIX.TS = T1.TS ";
 	__SQL_LINK_UNIONIP21 = " UNION ";
 	__SQL_LINK_JOINIP21 = " ";
-		
+
 	// Structure in case of nested filters (GS1 and GS2)
 	__SQL_NESTED_UNIONIP21 =
 	" SELECT VAR_PREFIX1.TS,VAR_CGS1VALUE FROM  ( ( VAR_GS1 ) AS VAR_PREFIX1 INNER JOIN ( VAR_GS2 ) AS VAR_PREFIX2 ON VAR_PREFIX1.TS = VAR_PREFIX2.TS ) ";
 	__SQL_NESTED_JOINIP21 = " VAR_GS1 UNION VAR_GS2 ";
-	
-	// PI SQL syntax -----------------------------------------------
-		
-	// Extern structure with all GS
-	__SQL_EXT_STRUCT_UNIONPI = " INNER JOIN ( VAR_ALL_GS) AS OR1 ON OR1.TIME = C1.TIME";
-	__SQL_EXT_STRUCT_JOINPI = " VAR_ALL_GS ";
-		
-	// Intern structure with 1 GS
-	__SQL_INT_STRUCT_UNIONPI = " VAR_GS ";
-	__SQL_INT_STRUCT_JOINPI = " INNER JOIN ( VAR_GS ) VAR_PREFIX ON VAR_PREFIX.TIME = C1.TIME ";
-	__SQL_LINK_UNIONPI = " UNION ";
-	__SQL_LINK_JOINPI = " ";
-		
-	// Structure in case of nested filters (GS1 and GS2)
-	__SQL_NESTED_UNIONPI =
-	" SELECT VAR_PREFIX1.TIME FROM ( VAR_GS1 ) AS VAR_PREFIX1 INNER JOIN ( VAR_GS2 ) VAR_PREFIX2 ON VAR_PREFIX1.TIME = VAR_PREFIX2.TIME ";
-	__SQL_NESTED_JOINPI = " VAR_GS1 UNION VAR_GS2 ";
-		
-	
-	// General parametrization
-	If( ServerType == "IP21", 
-		
-		// IP21 ---------------------------------------------
-		
-		If( Condition == "AND",
-			__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_JOINIP21;
-			__SQL_INT_STRUCT = __SQL_INT_STRUCT_JOINIP21;
-			__SQL_LINK = __SQL_LINK_JOINIP21;
-			__SQL_NESTED = __SQL_NESTED_JOINIP21;
-		,
-			__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_UNIONIP21;
-			__SQL_INT_STRUCT = __SQL_INT_STRUCT_UNIONIP21;
-			__SQL_LINK = __SQL_LINK_UNIONIP21;
-			__SQL_NESTED = __SQL_NESTED_UNIONIP21;
-		);
-		
-	, 
-		
-		// PI -----------------------------------------------
-		
-		If( Condition == "AND",
-			__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_JOINPI;
-			__SQL_INT_STRUCT = __SQL_INT_STRUCT_JOINPI;
-			__SQL_LINK = __SQL_LINK_JOINPI;
-			__SQL_NESTED = __SQL_NESTED_JOINPI;
-		,
-			__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_UNIONPI;
-			__SQL_INT_STRUCT = __SQL_INT_STRUCT_UNIONPI;
-			__SQL_LINK = __SQL_LINK_UNIONPI;
-			__SQL_NESTED = __SQL_NESTED_UNIONPI;
-		);
-		
+
+	If( Condition == "AND",
+		__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_JOINIP21;
+		__SQL_INT_STRUCT = __SQL_INT_STRUCT_JOINIP21;
+		__SQL_LINK = __SQL_LINK_JOINIP21;
+		__SQL_NESTED = __SQL_NESTED_JOINIP21;
+	,
+		__SQL_EXT_STRUCT = __SQL_EXT_STRUCT_UNIONIP21;
+		__SQL_INT_STRUCT = __SQL_INT_STRUCT_UNIONIP21;
+		__SQL_LINK = __SQL_LINK_UNIONIP21;
+		__SQL_NESTED = __SQL_NESTED_UNIONIP21;
 	);
-	
+
 	// Check if there at least one filter
 	Filters_Keys = Filters << Get Keys;
 	If( N Items( Filters_Keys ) == 0,
@@ -702,17 +329,17 @@ f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition
 	// Construct 1 filter by 1 filter
 	lst_AllGS = List();
 	Nested_in_Filters = 0;
-	
-	For( i = 1, i <= N Items( Filters_Keys ), i++, 
-	
+
+	For( i = 1, i <= N Items( Filters_Keys ), i++,
+
 		Key = Filters_Keys[i];
 		Filter = Filters[Key];
 		Comp1 = Filter[3][1];
 		Value1 = Filter[3][2];
 		Nested = 0; // Either 0, or 1 if nested filters but same tag (TAG1 > 0 AND TAG1 <50), or 2 if nested filters but different tags (TAG1 > 0 AND TAG2 <50)
-		
+
 		// Check if nested filters and retrieve filter info
-		If( Is List( Filter[1] ), 
+		If( Is List( Filter[1] ),
 			// 1st element : Tagname with unit/description. If nested , it is a list with the  2 tagnames to nest , else a str.
 			TagName_UnitDesc1 = Filter[1][1];
 			TagName_UnitDesc2 = Filter[1][2];
@@ -721,19 +348,19 @@ f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition
 			TagType1 = Filter[2][1];
 			Comp2 = Filter[3][3];
 			Value2 = Filter[3][4];
-				
+
 			If( TagName1 == TagName2,
 				Nested = 1,
 				Nested = 2;
 				Nested_in_Filters = 1;
 				TagType2 = Filter[2][2];
 			);
-		, 
+		,
 			// The filter is not nested
 			TagName1 = f_Remove_UnitDescription( Filter[1], TagSelect_AA );
 			TagType1 = Filter[2];
 		);
-		
+
 		// Build general syntax (GS) of  the filter
 		__SQL_GS = Match( Nested,
 			0, f_SQL_CREATE_ONE_FILTER( StartFormat, EndFormat, TagName1, TagType1, Comp1, Value1, Condition, ServerType ),
@@ -744,16 +371,10 @@ f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition
 			2,
 				GS1 = f_SQL_CREATE_ONE_FILTER( StartFormat, EndFormat, TagName1, TagType1, Comp1, Value1, Condition, ServerType );
 				GS2 = f_SQL_CREATE_ONE_FILTER( StartFormat, EndFormat, TagName2, TagType2, Comp2, Value2, Condition, ServerType );
-				
+
 				GS1 = Substitute( GS1, "VAR_PREFIX1", "C1_" || Char( i + 1 ) );
 				GS2 = Substitute( GS2, "VAR_PREFIX1", "C2_" || Char( i + 1 ) );
-				
-				If( ServerType == "PI",
-					GS1 = Substitute( GS1, "VAR_PREFIX2", "P1_" || Char( i + 1 ) );
-					GS2 = Substitute( GS2, "VAR_PREFIX2", "P2_" || Char( i + 1 ) );
-				
-				);
-				
+
 				Substitute( __SQL_NESTED,
 					"VAR_GS1", GS1,
 					"VAR_GS2", GS2,
@@ -761,186 +382,118 @@ f_SQL_CREATE_ALL_FILTERS = Function( {StartFormat, EndFormat, Filters, Condition
 					"VAR_PREFIX2", "NEST" || Char( i + 1 ) || "_2",
 					"VAR_CGS1", "C1_" || Char( i + 1 )
 				);
-				
-				
 		);
-		
+
 		// Add Prefix
 		__SQL_GS = Substitute( __SQL_GS, "VAR_PREFIX1", "C" || Char( i + 1 ) );
-		If( ServerType == "PI",
-			__SQL_GS = Substitute( __SQL_GS, "VAR_PREFIX2", "P" || Char( i + 1 ) )
-		);
-		
+
 		// Add intern structure
 		__SQL_INT_GS = Substitute( __SQL_INT_STRUCT, "VAR_GS", __SQL_GS, "VAR_PREFIX", "FILTER_" || Char( i + 1 ) );
-		
+
 		Insert Into( lst_AllGS, __SQL_INT_GS );
 
 	); //End loop on filters
-	
-	If( And( ServerType == "IP21", Nested_in_Filters == 0, Condition == "OR" ),		
-		__SQL_EXT_STRUCT = Substitute( __SQL_EXT_STRUCT, "INNER JOIN ( VAR_ALL_GS )","INNER JOIN ( SELECT * FROM ( VAR_ALL_GS ) )")
+
+	If( And( Nested_in_Filters == 0, Condition == "OR" ),
+		__SQL_EXT_STRUCT = Substitute( __SQL_EXT_STRUCT, "INNER JOIN ( VAR_ALL_GS )", "INNER JOIN ( SELECT * FROM ( VAR_ALL_GS ) )" )
 	);
-	
+
 	__SQL_ALL_GS = Concat Items( lst_AllGS, __SQL_LINK );
 	__SQL_FINAL_FILTER = Substitute( __SQL_EXT_STRUCT, "VAR_ALL_GS", __SQL_ALL_GS );
-	
+
 	Return( __SQL_FINAL_FILTER );
 );
 
 /*
     f_SQL_CREATE_ONE_FILTER Function
 
-    This function is used to create the SQL General Structure (GS) for one filter, 
-    including the filter's comparison, value, and other parameters.
+    Creates the IP21 SQL General Structure (GS) for one filter.
 
-    @param StartFormat: Start date in yyyy-mm-ddThh:mm:ss
-	@param EndFormat: End date in yyyy-mm-ddThh:mm:ss
+    @param StartFormat / EndFormat: window in yyyy-mm-ddThh:mm:ss
     @param TagName: Tag name (character).
     @param Tagtype: Tag type (character).
-    @param Comp: Comparison used in the filter (character).
-    @param Value: Value of the filter (character).
-    @param Condition: The condition to use (OR or AND).
-    @param ServerType: The server type (IP21 or PI).
+    @param Comp: Comparison used in the filter (character or list).
+    @param Value: Value of the filter (character or list).
+    @param Condition: "OR" or "AND".
+    @param ServerType: kept for call-site compatibility (always IP21 here).
 
     @return A string with the SQL General Structure (GS) for the specified filter.
 */
-f_SQL_CREATE_ONE_FILTER = Function( {StartFormat, EndFormat, TagName, Tagtype, Comp, Value, Condition, ServerType}, 
+f_SQL_CREATE_ONE_FILTER = Function( {StartFormat, EndFormat, TagName, Tagtype, Comp, Value, Condition, ServerType},
 
-    // PI SQL syntax -----------------------------------------------
-
-	// General Structure of 1 filter (GS)
-	__SQL_GENERAL_SYNTAX_PI =
-	"SELECT VAR_PREFIX1.TIME FROM [PIPOINT]..[PIPOINT] VAR_PREFIX2, [PIARCHIVE]..[VAR_TABLE] VAR_PREFIX1 WHERE VAR_PREFIX2.TAG = 'VAR_TAGNAME' AND VAR_PREFIX1.TAG = VAR_PREFIX2.TAG AND VAR_FILTER AND VAR_PREFIX1.TIME BETWEEN 'VAR_START_DATE' AND 'VAR_END_DATE' VAR_PERIOD GROUP BY VAR_PREFIX1.TIME";
-    
-    // Filters for Text and Numeric values
-	__SQL_VARFILTER4TEXT_PI =
-	" ( CAST(VAR_PREFIX1.VALUE AS STRING) VAR_COMP VAR_VALUE OR DIGSTRING(CAST(VAR_PREFIX1.VALUE AS INT32)) VAR_COMP VAR_VALUE) ";
-	__SQL_VARFILTER4NUM_PI = " VAR_PREFIX1.VALUE VAR_COMP VAR_VALUE ";
-	
-	 // IP21 SQL syntax -----------------------------------------------
-	 
 	// General Structure of 1 filter (GS)
 	__SQL_GENERAL_SYNTAX_IP21 =
 	"SELECT VAR_PREFIX1.TS, CASE name->IP_TAG_TYPE WHEN 'Analog' THEN CAST(VAR_TABLE_VALUE as REAL) ELSE VAR_TABLE_VALUE End as VAR_PREFIX1VALUE FROM VAR_TABLE VAR_PREFIX1 WHERE VAR_PREFIX1.NAME = 'VAR_TAGNAME' AND VAR_PREFIX1.REQUEST = VAR_REQUEST AND PERIOD = VAR_PERIOD  AND VAR_FILTER AND VAR_PREFIX1.TS >= 'VAR_START_DATE' AND  VAR_PREFIX1.TS <= 'VAR_END_DATE'";
-    
-    // Filters for Text and Numeric values
-	__SQL_VARFILTER4TEXT_IP21 = " VAR_PREFIX1VALUE VAR_COMP VAR_VALUE ";
-	__SQL_VARFILTER4NUM_IP21 = "  VAR_PREFIX1.VALUE NOT IN ('??????') AND VAR_PREFIX1VALUE VAR_COMP VAR_VALUE ";
-	
-    
-    // General parametrization based on ServerType
-	If( ServerType == "IP21", 
-        
-        // IP21 ---------------------------------------------
-        
-		TextTags = IP21TextTags;
-		NumTags = IP21NumTags;
-		
-		// SQL for IP21
-		__SQL_VARFILTER4TEXT = __SQL_VARFILTER4TEXT_IP21;
-		__SQL_VARFILTER4NUM = __SQL_VARFILTER4NUM_IP21;
-        
-        If(ValueIP21 == "AVG",
-        	__SQL_VARFILTER4NUM = Substitute(__SQL_VARFILTER4NUM, "VAR_PREFIX1.VALUE NOT IN ('??????') AND", "")
-        );
-	, 
-        
-        // PI -----------------------------------------------
-        
-		// Tagtype
-		TextTags = PITextTags;
-		NumTags = PINumTags;
-        
-        // SQL for PI
-		__SQL_VARFILTER4TEXT = __SQL_VARFILTER4TEXT_PI;
-		__SQL_VARFILTER4NUM = __SQL_VARFILTER4NUM_PI;
+
+	// Filters for Text and Numeric values
+	__SQL_VARFILTER4TEXT = " VAR_PREFIX1VALUE VAR_COMP VAR_VALUE ";
+	__SQL_VARFILTER4NUM = "  VAR_PREFIX1.VALUE NOT IN ('??????') AND VAR_PREFIX1VALUE VAR_COMP VAR_VALUE ";
+
+	If( ValueIP21 == "AVG",
+		__SQL_VARFILTER4NUM = Substitute( __SQL_VARFILTER4NUM, "VAR_PREFIX1.VALUE NOT IN ('??????') AND", "" )
 	);
-    
-    // Check the tagtype
-	If( Contains( NumTags, Tagtype ),
+
+	// Check the tagtype
+	If( Contains( IP21NumTags, Tagtype ),
 		__SQL_VARFILTER = __SQL_VARFILTER4NUM,
 		__SQL_VARFILTER = __SQL_VARFILTER4TEXT
 	);
-    
-    // Condition nested
+
+	// Condition nested
 	Condition_Nested = Match( Condition, "AND", " OR ", "OR", " AND " ); // Opposite
-    
+
 	// Construct VAR_FILTER
-    
+
 	// Convert Comp and Value into lists if they are not
 	If( !(Is List( Comp )),
 		Eval( Eval Expr( Comp = List( Expr( Comp ) ) ) );
 		Eval( Eval Expr( Value = List( Expr( Value ) ) ) );
 	);
-    
-    // Convert Comp and Value into SQL syntax comp/value
+
+	// Convert Comp and Value into SQL syntax comp/value
 	lstFiltersSQL = List();
-	For( i_val = 1, i_val <= N Items( Value ), i_val++, 
-    
+	For( i_val = 1, i_val <= N Items( Value ), i_val++,
+
 		Comp_i = Comp[i_val];
 		Val_i = Value[i_val];
-        
-        // Convert Value based on Comp
+
+		// Convert Value based on Comp
 		Val_i = Match( Comp_i,
-			"Like", "'%" || Char( f_RemoveQuotesIfWrapped(Val_i) ) || "%'",
-			"Not Like", "'%" || Char( f_RemoveQuotesIfWrapped(Val_i) ) || "%'",
+			"Like", "'%" || Char( f_RemoveQuotesIfWrapped( Val_i ) ) || "%'",
+			"Not Like", "'%" || Char( f_RemoveQuotesIfWrapped( Val_i ) ) || "%'",
 			"In", "(" || Char( Val_i ) || ")",
 			Val_i
 		);
-        
-        // Convert Comp based on Comp
+
+		// Convert Comp based on Comp
 		Comp_i = Match( Comp_i, "Like", "LIKE", "Not Like", "NOT LIKE", "In", "IN", "Not Equal", "<>", Comp_i );
-    
+
 		Filter_i = Substitute( __SQL_VARFILTER, "VAR_COMP", Comp_i, "VAR_VALUE", Val_i );
-		
-		If( And(Comp_i == "NOT LIKE", ServerType == "PI" ),
-			 Filter_i = Substitute(Filter_i, "OR DIGSTRING(CAST(","AND DIGSTRING(CAST(")
-		);
-		
+
 		Insert Into( lstFiltersSQL, Filter_i );
 	); // END loop
-    
-	// Substitute ServerType specific parameters
-	If( ServerType == "PI", 
-	
-		// PI ---------------------------------------------
-		
-		__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX_PI, "VAR_PERIOD", SQL_InterpolatedPI );
-        
-        // Check if TablePI is PIAVG
-		If( And( Contains( TextTags, Tagtype ), TablePI == "PIAVG" ),
-			__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX, "VAR_TABLE", "PIINTERP2" ),
-			__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX, "VAR_TABLE", TablePI )
-		);
-		
-	, 
-		
-		// IP21 ---------------------------------------------
-		
-		__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX_IP21,
-			"VAR_TABLE_VALUE", Char(ValueIP21) ,
-			"VAR_PERIOD", Char( NewPeriodNumValue ),
-			"VAR_REQUEST", Char( Request ),
-			"VAR_TABLE", TableIP21
-		);
-		
+
+	__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX_IP21,
+		"VAR_TABLE_VALUE", Char( ValueIP21 ),
+		"VAR_PERIOD", Char( NewPeriodNumValue ),
+		"VAR_REQUEST", Char( Request ),
+		"VAR_TABLE", TableIP21
 	);
-    
-    // Combine multiple filters using the specified Condition
+
+	// Combine multiple filters using the specified Condition
 	If( N Items( lstFiltersSQL ) > 1,
 		ConcatlstFilters = " ( " || Concat Items( lstFiltersSQL, Condition_Nested ) || " ) ",
 		ConcatlstFilters = lstFiltersSQL[1]
 	);
-    
-    // Substitute variables in the SQL query
+
+	// Substitute variables in the SQL query
 	__SQL_GENERAL_SYNTAX = Substitute( __SQL_GENERAL_SYNTAX,
 		"VAR_TAGNAME", TagName,
 		"VAR_FILTER", ConcatlstFilters,
 		"VAR_START_DATE", StartFormat,
 		"VAR_END_DATE", EndFormat
 	);
-    
-    // Return the SQL query
+
+	// Return the SQL query
 	Return( __SQL_GENERAL_SYNTAX );
 );

@@ -41,14 +41,13 @@ EXPR_DATA_EXTRACTION = Expr(
 	ServerType = rdbox_ServerType << Get Selected;
 	TableName = txt_TableName << Get text;
 
-	// v3.0: DA server / data source = the mandatory server name field
+	// v3.0: DA server / data source = the mandatory server name field.
+	// REST is the only transport: the WebAPI URL is required.
 	WebAPIURL = Trim( txtbox_WebAPIURL << Get Text );
 	DAServer = Char( MES );
 	PIAFServer = Trim( txtbox_PIAFServer << Get Text );
-	If( WebAPIURL != "",
-		f_Log( "INFO", "REST transport active - WebAPI URL " || WebAPIURL || " / server " || DAServer, section ),
-		f_Log( "INFO", "No WebAPI URL - using legacy OLEDB/ODBC transport (Windows only).", section )
-	);
+	f_REST_CheckConfigured();
+	f_Log( "INFO", "REST transport - WebAPI URL " || WebAPIURL || " / server " || DAServer, section );
 
 	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 		
