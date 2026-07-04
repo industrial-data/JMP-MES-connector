@@ -677,9 +677,23 @@ EXPR_ADDTAGS_EXTRACT = Expr(
 	Column( dt, ColTS["TS_UTC"] ) << data type( numeric ) << modeling type( continuous ) << Format( "yyyy-mm-ddThh:mm:ss" );
 
 	// Update data tables
-	dt << Update(
-		With( tblNewTags ),
-		Match Columns( :TS_UTC = :TS_UTC )
+	
+	strCol_TS = "TS";
+	strCol_TS_UTC = "TS_UTC";
+	Eval(
+		Eval Expr(
+			dt << Update(
+				With( tblNewTags ),
+				Match Columns(
+					:TS = Expr(
+						Parse( ":Name(\!"" || strCol_TS || "\!")" )
+					),
+					:TS_UTC = Expr(
+						Parse( ":Name(\!"" || strCol_TS_UTC || "\!")" )
+					)
+				)
+			)
+		)
 	);
 
 	dt << Maximize window( 1 ); // Full screen

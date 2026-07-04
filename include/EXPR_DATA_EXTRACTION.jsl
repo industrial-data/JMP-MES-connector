@@ -44,7 +44,10 @@ EXPR_DATA_EXTRACTION = Expr(
 	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 		
 	If( is_checked == 1,
-		NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+		If( ServerExtension == "",
+			NetworkNode = Char( MES ),
+			NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+		)
 	);
 	
 		
@@ -54,12 +57,12 @@ EXPR_DATA_EXTRACTION = Expr(
 	bttn_Extraction2 << Set Button Name( "Extracting..." );
 	
 	// Remember last server selected
-	Save Text File(
+	Try( Save Text File(
 		str.PathLastServerSelected,
 		Eval Insert(
 			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";"
 		)
-	);
+	) );
 	
 	
 	/* 1.2. User options */

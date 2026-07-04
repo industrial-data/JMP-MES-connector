@@ -40,6 +40,17 @@ If( !Directory Exists( str.PathReport),
 	Create Directory( str.PathReport );
 );
 
+// =====  2.1b  ADD-IN STATE/CACHE PATH =====  //
+/* Add-in state files (window size, last server selected, guardband recall) must live in a
+   location the current user can always write to. The add-in's own install folder (strPath)
+   is not guaranteed to be writable (e.g. installed under Program Files, or run directly from
+   a Downloads folder subject to Windows write restrictions), so these go under $DOCUMENTS
+   instead, matching str.PathReport above. */
+str.PathAppState = "$DOCUMENTS" || "\MES Data Retrieval\Config\";
+If( !Directory Exists( str.PathAppState ),
+	Create Directory( str.PathAppState );
+);
+
 
 // =====  2.2  SERVERS LIST PATH =====  //
 //strPathServerlist = "$DOCUMENTS/MES_servers_list.csv";
@@ -52,7 +63,7 @@ strPathHelpDoc = strPath || "doc/MES Data retrieval - User Guide - OS.pdf"  ;
 
 // =====  2.4 GUARDBAND PATH =====  //
 strPathGuardband = "$DOCUMENTS" || "\Guardband\";
-str.path_guardband_recall = strPath || "config/guardband_selection_recall.txt";
+str.path_guardband_recall = str.PathAppState || "guardband_selection_recall.txt";
 
 
 // =====  2.5 WORKFLOW PATH =====  //
@@ -60,7 +71,7 @@ strWorkflowPath = "";
 
 
 // =====  2.6 USER SCREEN SIZE PATH =====  //
-PathWindowSize = strPath || "config/sizewindow.txt";
+PathWindowSize = str.PathAppState || "sizewindow.txt";
 
 If(File Exists(PathWindowSize),
 	Eval( Parse( Load Text File(PathWindowSize) )) ;
@@ -68,12 +79,12 @@ If(File Exists(PathWindowSize),
 	w = New Window("Get Window Size...");
 	w << Maximize Window(1);
 	WindowSize = w << Get Window Size();
-	Save Text File(PathWindowSize, "WindowSize = " || Char(WindowSize) );
+	Try( Save Text File(PathWindowSize, "WindowSize = " || Char(WindowSize) ) );
 	w << Close Window;
 );
 
 // =====  2.7 LAST SERVER SELECTED PATH =====  //
-str.PathLastServerSelected = strPath || "config/LastServerSelected.txt";
+str.PathLastServerSelected = str.PathAppState || "LastServerSelected.txt";
 If( File Exists( str.PathLastServerSelected ),
 	Eval( Parse( Load Text File( str.PathLastServerSelected ) ) )
 );

@@ -449,7 +449,7 @@ EXPR_GUARDBAND_RUN = Expr(
 	);
 	
 	//Save parameters
-	Save Text File( str.path_guardband_recall, "AA.guardband_recall = " || Char( AA.guardband_recall ), "replace" );
+	Try( Save Text File( str.path_guardband_recall, "AA.guardband_recall = " || Char( AA.guardband_recall ), "replace" ) );
 	
 				
 /****************************************************
@@ -791,7 +791,7 @@ EXPR_GUARDBAND_RUN = Expr(
 		
 			With( tbl.guardband_table_selected ),
 			Add columns from Update table( {"LCL", "UCL"} ),
-			Replace columns in main table( None )
+			Replace columns in main table( "None" )
 		
 		);
 		Close( tbl.guardband_table_selected, nosave );
