@@ -1418,7 +1418,9 @@ f_Convert_In_PowershellScript = Function( {ps_path, MES, SQL_query},
 	{Default local}, 
 	
 	
-	command = "powershell -ExecutionPolicy Bypass -File " || ps_path || " " || MES || " \!"" || SQL_query || "\!"";
+	// Quote the script path and server: user paths can contain spaces or other
+	// characters (e.g. C:\Users\John Doe\...) that break unquoted cmd/powershell arguments.
+	command = "powershell -ExecutionPolicy Bypass -File \!"" || ps_path || "\!" \!"" || MES || "\!" \!"" || SQL_query || "\!"";
 	
 	f_Log( "INFO", "<SQL Query> (PI) \!n\!n" );
 
