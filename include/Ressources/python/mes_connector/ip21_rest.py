@@ -55,12 +55,16 @@ def ip21_sql(base_url: str, datasource: str, sql: str) -> pd.DataFrame:
         f"<![CDATA[{sql}]]></SQL>"
     )
     s = get_session(base)
-    r = check_response(s.post(
+    # Echo the request in the JMP log (v2.x did the same with its PowerShell commands)
+    print(f"POST {base}/SQL  ds={datasource}  sql={' '.join(sql.split())[:300]}", flush=True)
+    r = s.post(
         f"{base}/SQL",
         data=body.encode("utf-8"),
         headers={"Content-Type": "text/xml"},
         timeout=TIMEOUT_S + 30,
-    ))
+    )
+    print(f" -> {r.status_code}", flush=True)
+    check_response(r)
     return _xml_rows_to_dataframe(r.text)
 
 
@@ -73,12 +77,14 @@ def browse(base_url: str, datasource: str, tag_wildcard: str = "*",
     """
     base = base_url.rstrip("/")
     s = get_session(base)
-    r = check_response(s.get(
+    r = s.get(
         f"{base}/Browse",
         params={"dataSource": datasource, "tag": tag_wildcard,
                 "max": max_tags, "getTrendable": 0},
         timeout=120,
-    ))
+    )
+    print(f"GET {r.request.url} -> {r.status_code}", flush=True)
+    check_response(r)
     return _xml_rows_to_dataframe(r.text)
 
 

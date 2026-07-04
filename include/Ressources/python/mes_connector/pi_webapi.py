@@ -43,13 +43,24 @@ NUMERIC_POINT_TYPES = {
     "UInt8", "UInt16", "UInt32", "UInt64", "Single", "Double",
 }
 
+# Every request URL is echoed with print() so it shows up in the JMP log —
+# same debugging philosophy as v2.x, which echoed its PowerShell commands.
+LOG_URLS = True
+
+
+def _log_url(resp) -> None:
+    if LOG_URLS:
+        print(f"GET {resp.request.url} -> {resp.status_code}", flush=True)
+
 
 # ---------------------------------------------------------------------------
 # Data server + tag search
 # ---------------------------------------------------------------------------
 def _dataserver_webid(base: str, da_server: str) -> str:
     s = get_session(base)
-    r = check_response(s.get(f"{base}/dataservers", params={"name": da_server}, timeout=60))
+    r = s.get(f"{base}/dataservers", params={"name": da_server}, timeout=60)
+    _log_url(r)
+    check_response(r)
     body = r.json()
     if "WebId" in body:
         return body["WebId"]
@@ -85,7 +96,9 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
         }
         if nf:
             params["nameFilter"] = nf
-        r = check_response(s.get(f"{base}/dataservers/{webid}/points", params=params, timeout=120))
+        r = s.get(f"{base}/dataservers/{webid}/points", params=params, timeout=120)
+        _log_url(r)
+        check_response(r)
         items = r.json().get("Items", [])
         if not items:
             break
@@ -101,9 +114,9 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
 
     df = df.rename(columns={
         "Name": "tagnames", "Descriptor": "descriptions",
-        "EngineeringUnits": "units", "PointType": "type",
+        "EngineeringUnits": "units", "PointType": "type", "Path": "path",
     })
-    for c in ("tagnames", "descriptions", "units", "type"):
+    for c in ("tagnames", "descriptions", "units", "type", "path"):
         if c not in df.columns:
             df[c] = ""
         df[c] = df[c].fillna("")
@@ -112,7 +125,9 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
     if d:
         df = df[df["descriptions"].str.contains(d, case=False, na=False, regex=False)]
 
-    return df[["tagnames", "descriptions", "units", "type"]].reset_index(drop=True)
+    # `path` is extra (not part of the legacy contract): kept for the planned
+    # AF attribute search where labels become  tag (desc) [units] {path}
+    return df[["tagnames", "descriptions", "units", "type", "path"]].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +136,14 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
 def _point_info(base: str, da_webid: str, tag: str) -> dict:
     """WebId + PointType for one tag (exact name lookup)."""
     s = get_session(base)
-    r = check_response(s.get(
+    r = s.get(
         f"{base}/dataservers/{da_webid}/points",
         params={"nameFilter": tag, "maxCount": 1,
                 "selectedFields": "Items.WebId;Items.Name;Items.PointType"},
         timeout=60,
-    ))
+    )
+    _log_url(r)
+    check_response(r)
     items = r.json().get("Items", [])
     if not items:
         raise RuntimeError(f"Tag '{tag}' not found on PI server")
@@ -188,7 +205,9 @@ def _fetch_one(base: str, da_webid: str, tag: str, label: str, method: str,
     all_items = []
     while url:
         time.sleep(PAGING_DELAY_S)
-        r = check_response(s.get(url, params=params, timeout=300))
+        r = s.get(url, params=params, timeout=300)
+        _log_url(r)
+        check_response(r)
         body = r.json()
         items = body.get("Items", [])
         if method == "Average":
@@ -252,9 +271,10 @@ def extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
     # as tz-naive datetime64 so JMP receives real datetime columns (no string
     # parsing on the JSL side). Documented limitation: TS uses the JMP client's
     # time zone, which matches the plant zone in the standard deployment.
+    from datetime import datetime
     idx = wide.index
     out = pd.DataFrame()
-    out["TS"] = idx.tz_convert(pd.Timestamp.now().astimezone().tzinfo).tz_localize(None)
+    out["TS"] = idx.tz_convert(datetime.now().astimezone().tzinfo).tz_localize(None)
     out["TS_UTC"] = idx.tz_localize(None)
     for c in wide.columns:
         out[c] = wide[c].values

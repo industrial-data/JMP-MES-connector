@@ -41,11 +41,34 @@ Ressources_REST.jsl
 | `filters.py`  | Translate the add-in's filter structure to PI filterExpression and/or pandas masks. |
 | `__init__.py` | Public API used by JSL: `search_tags`, `extract`, `ip21_sql`, `set_credentials`, `test_connection`. |
 
+## Server list (simplified in v3.0)
+
+`MES_servers_list.xlsx` columns: `site` (optional display name, falls back to
+the server name), `server` (MANDATORY — PI Data Archive name or IP21 ADSA data
+source name; also used as network node by the OLEDB fallback), `Type`
+(PI | IP21), `WebAPI_URL` (optional — empty means OLEDB/SQLplus fallback,
+Windows only; tolerant to missing scheme and trailing `/`, see
+`normalize_base_url`), `PI_AF_Server` (optional, PI only — future AF search).
+
+## Debugging
+
+Every HTTP request URL is `print()`ed so it appears in the JMP log (v2.x did
+the same with its PowerShell commands). Look for `GET https://.../streams/...`
+lines when an extraction misbehaves. Toggle with `pi_webapi.LOG_URLS`.
+
+## Planned: PI AF attribute search (groundwork present, not implemented)
+
+When `PI_AF_Server` is set, a future search mode will browse AF elements
+(`/assetservers` → `/assetdatabases` → `/elements` → `/attributes`) and show a
+collapsible hierarchy (JSL Tree Box) of elements with their attributes;
+result labels become `tagname (description) [units] {path}`. `search_tags`
+already accepts `af_server` and returns a `path` column for this.
+
 ## Contracts with the JSL side (do not break these)
 
 - `search_tags()` returns a DataFrame with columns **exactly**
-  `tagnames, descriptions, units, type` — same shape as the legacy SQL search,
-  so the GUI list-box code is untouched.
+  `tagnames, descriptions, units, type` (+ extra `path`) — same shape as the
+  legacy SQL search, so the GUI list-box code is untouched.
 - `extract()` returns a **wide** DataFrame: `TS` (server-local time, string
   `yyyy-MM-dd HH:mm:ss`), `TS_UTC`, then one column per requested tag whose
   column name is the *label* passed by JSL (tagname + description + unit).

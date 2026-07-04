@@ -36,7 +36,9 @@
 REST_PY_INITIALIZED = 0;
 If( Is Empty( int.UseREST ), int.UseREST = 1 );   // config.jsl can override (0 = force legacy OLEDB)
 If( Is Empty( WebAPIURL ), WebAPIURL = "" );
-If( Is Empty( DAServer ), DAServer = "" );
+If( Is Empty( DAServer ), DAServer = "" );        // = the mandatory "server" field (PI DA / IP21 data source)
+If( Is Empty( PIAFServer ), PIAFServer = "" );    // optional, PI only — reserved for the future AF attribute search
+REST_ChunkSize = 5;                                // tags per Python call; matches the PI worker pool, drives the progress bar
 
 /* REST is used when enabled in config AND the selected server has a WebAPI URL */
 f_REST_Enabled = Function( {},
@@ -108,9 +110,11 @@ f_REST_Login = Function( {rest_host},
     one retry, converts any other python exception into a JSL Throw (so the
     caller's Try() can fall back to the legacy OLEDB path).
 
-    @return A JMP data table built from rest_df.
+    f_REST_PyExec runs the code without fetching a table back (used for the
+    chunked extraction steps); f_REST_PyCall additionally returns rest_df as
+    a JMP data table.
 */
-f_REST_PyCall = Function( {py_body},
+f_REST_PyExec = Function( {py_body},
 
 	f_REST_InitPython();
 
@@ -165,6 +169,11 @@ mc.set_credentials(rest_host, rest_user, rest_pwd)
 		Throw( "REST: " || Char( rest_err ) );
 	);
 
+	Return( 1 );
+);
+
+f_REST_PyCall = Function( {py_body},
+	f_REST_PyExec( py_body );
 	Return( Python Get( rest_df ) );
 );
 
@@ -189,12 +198,15 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		Python Send( rest_sql );
 		dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)" );
 	,
-		// PI: native PI Web API point search
+		// PI: native PI Web API point search (af_server reserved for the
+		// future AF attribute search with collapsible element hierarchy)
 		rest_name = Char( TagName );
 		rest_desc = Char( TagDescription );
+		rest_af = Char( PIAFServer );
 		Python Send( rest_name );
 		Python Send( rest_desc );
-		dt_rest = f_REST_PyCall( "rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc)" );
+		Python Send( rest_af );
+		dt_rest = f_REST_PyCall( "rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc, rest_af)" );
 	);
 
 	dt_rest << Set Name( "f_REST_FINDTAGS Results" );
@@ -348,27 +360,66 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 
 	rest_base = Char( WebAPIURL );
 	rest_da = Char( DAServer );
-	rest_tags = lstTags;
-	rest_labels = lstLabels;
 	rest_method = Char( ExtractionMethod );
 	rest_start = Char( StartFormat );
 	rest_end = Char( EndFormat );
 	rest_interval = NewPeriodNumValue_s;
 	rest_filters = f_Filters_ToJSON( Filters_AA, Condition );
 
+	f_Log( "INFO",
+		"PI Web API - base URL " || rest_base || " / DA server " || rest_da || " / method " || rest_method
+		 || " / window " || rest_start || " -> " || rest_end || " / interval " || Char( rest_interval ) || "s"
+		 || " (request URLs are echoed below by the Python layer)", section );
+
 	Python Send( rest_base );
 	Python Send( rest_da );
-	Python Send( rest_tags );
-	Python Send( rest_labels );
 	Python Send( rest_method );
 	Python Send( rest_start );
 	Python Send( rest_end );
 	Python Send( rest_interval );
 	Python Send( rest_filters );
 
-	tblAllTags = f_REST_PyCall(
-		"rest_df = mc.pi_extract(rest_base, rest_da, list(rest_tags), list(rest_labels), rest_method, rest_start, rest_end, int(rest_interval), rest_filters)"
+	// Open an extraction session on the Python side (computes the shared
+	// filterExpression once), then feed it chunks of tags so the existing
+	// progress bar can advance between Python calls.
+	f_REST_PyExec(
+		"mc.pi_extract_begin(rest_base, rest_da, rest_method, rest_start, rest_end, int(rest_interval), rest_filters)\!nrest_df = __import__('pandas').DataFrame()"
 	);
+
+	NTags = N Items( lstTags );
+	progress:init( NTags, WindowSize );
+
+	// Any chunk failure must close the progress window before propagating
+	Try(
+
+	i_done = 0;
+	While( i_done < NTags,
+		i_hi = Min( i_done + REST_ChunkSize, NTags );
+
+		strInfo = "Extracting (PI Web API): " || Char( i_hi ) || " / " || Char( NTags ) || " - " || Char( lstTags[i_done + 1] );
+		f_Log( "INFO", strInfo, section );
+		progress:set( i_hi, strInfo );
+		Try(
+			bttn_Extraction << Set Button Name( strInfo );
+			bttn_Extraction2 << Set Button Name( strInfo );
+		);
+
+		rest_tags = lstTags[Index( i_done + 1, i_hi )];
+		rest_labels = lstLabels[Index( i_done + 1, i_hi )];
+		Python Send( rest_tags );
+		Python Send( rest_labels );
+		f_REST_PyExec( "mc.pi_extract_chunk(list(rest_tags), list(rest_labels))\!nrest_df = __import__('pandas').DataFrame()" );
+
+		i_done = i_hi;
+	);
+
+	tblAllTags = f_REST_PyCall( "rest_df = mc.pi_extract_end()" );
+
+	, // On error: close the progress bar, then rethrow to the caller's fallback logic
+		progress:term();
+		Throw( "REST: PI Web API extraction failed (see log)" );
+	);
+	progress:term();
 
 	f_Log( "INFO", "END PI Web API extraction - " || Char( N Rows( tblAllTags ) ) || " rows.", section );
 	Return( tblAllTags );

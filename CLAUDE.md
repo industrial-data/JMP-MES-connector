@@ -19,9 +19,15 @@ data as a JMP table.
   instead of going through ODBC. Filters stay fully server-side (they're in the SQL).
 - **Fallback**: the v2.x OLEDB (PI, via PowerShell) / ODBC (IP21) path still exists and is
   used when REST fails or no `WebAPI_URL` is configured — **Windows only**.
-- The server list (`MES_servers_list.xlsx`) has two v3.0 columns: `WebAPI_URL` and
-  `DAServer` (PI Data Archive name / IP21 ADSA data source name). Also editable in the GUI
-  ("Edit server address" panel). `config.jsl` has `int.UseREST = 1` to force legacy mode.
+- The server list (`MES_servers_list.xlsx`) was simplified in v3.0 to: `site` (optional
+  display name), `server` (mandatory — PI DA name / IP21 data source, also the OLEDB
+  network node), `Type` (PI|IP21), `WebAPI_URL` (optional; empty → OLEDB fallback;
+  scheme/trailing-slash tolerant via `mes_connector.normalize_base_url`), `PI_AF_Server`
+  (optional; reserved for the planned AF attribute search with a collapsible element
+  tree). Same fields editable in the GUI ("Edit server address" panel; Extension/Shortname
+  boxes are orphan legacy widgets). `config.jsl` has `int.UseREST = 1` to force legacy mode.
+- Debugging: the Python layer prints every request URL into the JMP log; PI extraction
+  runs chunked (5 tags per call) to drive the legacy `progress:` bar.
 - Auth: SSO first (SSPI/Kerberos), JSL login dialog on 401 (see `mes_connector/auth.py`).
 
 Read `include/Ressources/python/mes_connector/README.md` before touching the Python layer —

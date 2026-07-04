@@ -41,12 +41,12 @@ EXPR_DATA_EXTRACTION = Expr(
 	ServerType = rdbox_ServerType << Get Selected;
 	TableName = txt_TableName << Get text;
 
-	// v3.0 REST fields (may have been edited by the user in the server panel)
+	// v3.0: DA server / data source = the mandatory server name field
 	WebAPIURL = Trim( txtbox_WebAPIURL << Get Text );
-	DAServer = Trim( txtbox_DAServer << Get Text );
-	If( And( DAServer == "", WebAPIURL != "" ), DAServer = Char( MES ) );
+	DAServer = Char( MES );
+	PIAFServer = Trim( txtbox_PIAFServer << Get Text );
 	If( WebAPIURL != "",
-		f_Log( "INFO", "REST transport active - WebAPI URL " || WebAPIURL || " / DA server " || DAServer, section ),
+		f_Log( "INFO", "REST transport active - WebAPI URL " || WebAPIURL || " / server " || DAServer, section ),
 		f_Log( "INFO", "No WebAPI URL - using legacy OLEDB/ODBC transport (Windows only).", section )
 	);
 

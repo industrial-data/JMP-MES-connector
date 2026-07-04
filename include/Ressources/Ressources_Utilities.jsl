@@ -2622,19 +2622,17 @@ f_UpdateMESInfo = Function( {},
 
 	// v3.0 REST fields (empty when the server list has no WebAPI info yet)
 		WebAPIURL = Try( AA.ServersInfo[MES_FullName]["WebAPI_URL"], "" );
-		DAServer = Try( AA.ServersInfo[MES_FullName]["DAServer"], "" );
+		PIAFServer = Try( AA.ServersInfo[MES_FullName]["PI_AF_Server"], "" );
 		If( Is Missing( WebAPIURL ), WebAPIURL = "" );
-		If( Is Missing( DAServer ), DAServer = "" );
-		If( And( DAServer == "", WebAPIURL != "" ),
-			DAServer = MES  // sensible default: DA/data source name = host name
-		);
+		If( Is Missing( PIAFServer ), PIAFServer = "" );
+		DAServer = MES;   // DA server / data source = the mandatory server name
 
-	// Update textbox with Server Address / Extension / Shortname
+	// Update textbox with Server name / REST fields (Extension/Shortname are orphan boxes kept for legacy paths)
 		txtbox_ServerAddress << Set Text( MES );
 		txtbox_ServerExtension << Set Text( ServerExtension );
 		txtbox_Shortname << Set Text( ShortName );
 		Try( txtbox_WebAPIURL << Set Text( Char( WebAPIURL ) ) );
-		Try( txtbox_DAServer << Set Text( Char( DAServer ) ) );
+		Try( txtbox_PIAFServer << Set Text( Char( PIAFServer ) ) );
 	
 	// UPdate radio box IP21 /PI
 		If( ServerType == "IP21",
