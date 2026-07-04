@@ -53,19 +53,97 @@ f_REST_CheckConfigured = Function( {},
 *  II. PYTHON SESSION
 ******************************************************/
 
-/* Put the add-in's python folder on sys.path (once per JMP session) */
+/*
+    f_REST_InitPython Function
+
+    Prepares JMP's embedded Python (once per JMP session):
+      1. Locates the mes_connector package folder inside the add-in
+         (dev fallback: the current default directory when the add-in
+         path variable is not set).
+      2. Adds it to sys.path with the path EMBEDDED in the python source
+         (forward slashes — valid on Windows too). We deliberately do not
+         rely on Python Send() for this critical step.
+      3. Imports mes_connector inside python and reports the REAL outcome
+         back ("OK ..." or "IMPORT_ERROR: ..."), which goes to the JMP log.
+      4. If requests is missing (JMP's python is an ISOLATED environment
+         with its own site-packages — the validated notebook ran in an
+         external Anaconda), installs it via Python Install Packages and
+         retries. On Windows it also tries requests-negotiate-sspi so SSO
+         works; failing that, the login dialog covers auth.
+      5. Round-trip-tests Python Send/Get, since every later bridge call
+         relies on that mechanism.
+*/
 f_REST_InitPython = Function( {},
+
 	If( REST_PY_INITIALIZED == 1, Return( 1 ) );
-	If( Host is( "Windows" ),
-		rest_pkg_path = Convert File Path( strPath || "include/Ressources/python", windows ),
-		rest_pkg_path = Convert File Path( strPath || "include/Ressources/python", posix )
+
+	// v3.0 needs JMP's modern embedded Python (DataFrame <-> data table)
+	If( Num( Word( 1, Char( JMP Version() ), "." ) ) < 18,
+		f_DialogError( "This add-in version requires JMP 18 or later (embedded Python). Detected: " || Char( JMP Version() ) )
 	);
-	Python Send( rest_pkg_path );
-	Python Submit( "\[
+
+	// --- 1) Locate the package folder -----------------------------------
+	str.pkg_jmp_path = strPath || "include/Ressources/python";
+	If( !Try( Directory Exists( str.pkg_jmp_path ), 0 ),
+		// Dev mode: script run from the repo without the add-in installed
+		str.pkg_jmp_path = Get Default Directory() || "include/Ressources/python"
+	);
+	If( !Try( Directory Exists( str.pkg_jmp_path ), 0 ),
+		f_DialogError(
+			"mes_connector python package not found at: " || Char( str.pkg_jmp_path ) ||
+			". The v3.0 add-in files are incomplete - reinstall the add-in."
+		)
+	);
+	If( Host is( "Windows" ),
+		// Forward slashes are valid path separators for python on Windows and
+		// avoid any backslash-escaping issues inside the python source string
+		rest_pkg_path = Substitute( Convert File Path( str.pkg_jmp_path, windows ), "\!\", "/" ),
+		rest_pkg_path = Convert File Path( str.pkg_jmp_path, posix )
+	);
+
+	Python Init();
+
+	// --- 2+3) sys.path + import check, path embedded in the source ------
+	str.init_code = Eval Insert( "\[
 import sys
-if rest_pkg_path not in sys.path:
-    sys.path.insert(0, rest_pkg_path)
+rest_status = ""
+_pkg = "^rest_pkg_path^"
+if _pkg not in sys.path:
+    sys.path.insert(0, _pkg)
+try:
+    import mes_connector
+    rest_status = "OK " + mes_connector.__version__ + " | python " + sys.version.split()[0] + " | " + _pkg
+except Exception as _ex:
+    rest_status = "IMPORT_ERROR: " + repr(_ex) + " | pkg=" + _pkg
 ]\" );
+	Python Submit( str.init_code );
+	rest_status = Python Get( rest_status );
+	f_Log( "INFO", "Python init - " || Char( rest_status ), "REST" );
+
+	// --- 4) Missing dependency? install into JMP's site-packages --------
+	If( Contains( Char( rest_status ), "No module named 'requests'" ) | Contains( Char( rest_status ), "No module named 'urllib3'" ),
+		f_Log( "WARNING", "JMP's python environment lacks 'requests' - installing it now (needs internet/proxy access)...", "REST" );
+		Try( Python Install Packages( "requests" ) );
+		If( Host is( "Windows" ),
+			// Optional: enables silent Windows SSO; the login dialog covers auth if this fails
+			Try( Python Install Packages( "requests-negotiate-sspi" ) )
+		);
+		Python Submit( str.init_code );
+		rest_status = Python Get( rest_status );
+		f_Log( "INFO", "Python init (after install) - " || Char( rest_status ), "REST" );
+	);
+
+	If( !Starts With( Char( rest_status ), "OK" ),
+		f_DialogError( "Python setup failed: " || Char( rest_status ) )
+	);
+
+	// --- 5) Verify the Python Send/Get mechanism the bridge relies on ---
+	rest_probe = "ping";
+	Python Send( rest_probe );
+	If( Char( Try( Python Get( rest_probe ), "" ) ) != "ping",
+		f_DialogError( "JMP's Python Send/Get round-trip failed - cannot pass parameters to the REST layer. Check your JMP python configuration (File > Preferences > Python)." )
+	);
+
 	REST_PY_INITIALIZED = 1;
 	f_Log( "INFO", "Python REST layer initialized - " || rest_pkg_path, "REST" );
 );

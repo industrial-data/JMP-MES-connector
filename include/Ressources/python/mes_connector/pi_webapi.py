@@ -195,6 +195,10 @@ def _fetch_one(base: str, da_webid: str, tag: str, label: str, method: str,
     Handles paging via Links.Next (present when a window exceeds the server's
     max return count) and unwraps summary items (nested one level deeper).
     """
+    # Empty results must still carry a tz-aware DatetimeIndex, otherwise
+    # concat with non-empty tags fails (cannot join tz-naive with tz-aware).
+    empty = pd.DataFrame(columns=[label], index=pd.DatetimeIndex([], tz="UTC"))
+
     info = _point_info(base, da_webid, tag)
     point_type = str(info.get("PointType", ""))
     s = get_session(base)
@@ -218,13 +222,17 @@ def _fetch_one(base: str, da_webid: str, tag: str, label: str, method: str,
         params = None  # the Next link already carries the query string
 
     if not all_items:
-        return pd.DataFrame(columns=[label])
+        return empty
 
     df = pd.DataFrame(all_items)
     if "Good" in df.columns:  # drop bad-quality values (matches v2.x '??????' filter)
         df = df[df["Good"].fillna(True)]
+    if df.empty or "Timestamp" not in df.columns:
+        return empty
     ts = pd.to_datetime(df.get("Timestamp"), errors="coerce", utc=True)
     df = df.loc[ts.notna()].copy()
+    if df.empty:
+        return empty
     df[label] = df["Value"].apply(lambda v: _normalize_value(v, point_type))
     df.index = ts.loc[ts.notna()].dt.floor("s")
     df = df[~df.index.duplicated(keep="last")]
@@ -257,7 +265,7 @@ def extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
                 last_err = ex
                 time.sleep(RETRY_WAIT_S)
         print(f"[extract] '{tags[i]}' failed after {MAX_ATTEMPTS} attempts: {last_err}")
-        return i, pd.DataFrame(columns=[labels[i]])
+        return i, pd.DataFrame(columns=[labels[i]], index=pd.DatetimeIndex([], tz="UTC"))
 
     parts: list[pd.DataFrame | None] = [None] * len(tags)
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, max(1, len(tags)))) as pool:

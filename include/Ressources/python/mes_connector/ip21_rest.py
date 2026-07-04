@@ -94,7 +94,14 @@ def _xml_rows_to_dataframe(xml_text: str) -> pd.DataFrame:
     xml_text = xml_text.strip()
     if not xml_text:
         return pd.DataFrame()
-    root = ET.fromstring(xml_text)
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as ex:
+        # Aspen (or a proxy) answered with non-XML, e.g. an HTML error page.
+        # Surface the beginning of the payload — it usually names the problem.
+        raise RuntimeError(
+            f"IP21 REST returned non-XML ({ex}); response starts with: {xml_text[:300]!r}"
+        ) from ex
 
     # Aspen wraps errors in the payload rather than HTTP status codes
     for err in root.iter():
