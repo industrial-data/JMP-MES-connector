@@ -69,7 +69,7 @@ For( i = 1, i <= N Items( lstDependencies ), i++,
 
 // --------------------------------- SERVER LIST --------------------------------- //
 
-strPathServerlist = "https://raw.githubusercontent.com/industrial-data/JMP-MES-connector/refs/heads/main/MES_servers_list.csv";
+strPathServerlist = "https://raw.githubusercontent.com/industrial-data/JMP-MES-connector/refs/heads/main/MES_servers_list.xlsx";
 
 /* Source file with list of servers */
 Try(
@@ -77,22 +77,27 @@ Try(
 		Eval Expr(
 			Open(
 				strPathServerlist,
-				Import Settings(
-					End Of Line( CRLF, CR, LF ),
-					End Of Field( Other( ";" ), CSV( 0 ) ),
-					Strip Quotes( 1 ),
-					Use Apostrophe as Quotation Mark( 0 ),
-					Use Regional Settings( 0 ),
-					Scan Whole File( 1 ),
-					Treat empty columns as numeric( 0 ),
-					CompressNumericColumns( 0 ),
-					CompressCharacterColumns( 0 ),
-					CompressAllowListCheck( 0 ),
-					Labels( 1 ),
-					Column Names Start( 1 ),
-					Data Starts( 2 ),
-					Lines To Read( "All" ),
-					Year Rule( "20xx" )
+				Worksheets( "MES_servers_list" ),
+				Use for all sheets( 1 ),
+				Concatenate Worksheets( 0 ),
+				Create Concatenation Column( 0 ),
+				Worksheet Settings(
+					1,
+					Has Column Headers( 1 ),
+					Number of Rows in Headers( 1 ),
+					Headers Start on Row( 1 ),
+					Data Starts on Row( 2 ),
+					Data Starts on Column( 1 ),
+					Data Ends on Row( 0 ),
+					Data Ends on Column( 0 ),
+					Replicated Spanned Rows( 1 ),
+					Replicated Spanned Headers( 0 ),
+					Suppress Hidden Rows( 1 ),
+					Suppress Hidden Columns( 1 ),
+					Suppress Empty Columns( 0 ),
+					Treat as Hierarchy( 0 ),
+					Multiple Series Stack( 0 ),
+					Import Cell Colors( 0 )
 				),
 				strTableVisibility;
 			)
