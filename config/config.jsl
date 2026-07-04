@@ -2,7 +2,7 @@
  * General Information
  *
  * Script Title    : Config
- * Version         : 2.3
+ * Version         : 3.0
  *
  * Description:
  * This script configurates global parameters
@@ -29,7 +29,11 @@
 // --------------------------------- 1. VERSION --------------------------------- //
  
 /* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
- Version = "2026@ V.2.3.0";
+ Version = "2026@ V.3.0.0";
+
+/* v3.0: REST (PI Web API / Aspen Process Data REST) is the default transport.
+   Set to 0 to force the legacy OLEDB/ODBC drivers (Windows only). */
+int.UseREST = 1;
  
  
  // --------------------------------- 2. PATHS --------------------------------- // 

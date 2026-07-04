@@ -40,7 +40,16 @@ EXPR_DATA_EXTRACTION = Expr(
 	ShortName = txtbox_Shortname << Get text;
 	ServerType = rdbox_ServerType << Get Selected;
 	TableName = txt_TableName << Get text;
-	
+
+	// v3.0 REST fields (may have been edited by the user in the server panel)
+	WebAPIURL = Trim( txtbox_WebAPIURL << Get Text );
+	DAServer = Trim( txtbox_DAServer << Get Text );
+	If( And( DAServer == "", WebAPIURL != "" ), DAServer = Char( MES ) );
+	If( WebAPIURL != "",
+		f_Log( "INFO", "REST transport active - WebAPI URL " || WebAPIURL || " / DA server " || DAServer, section ),
+		f_Log( "INFO", "No WebAPI URL - using legacy OLEDB/ODBC transport (Windows only).", section )
+	);
+
 	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 		
 	If( is_checked == 1,

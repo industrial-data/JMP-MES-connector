@@ -176,9 +176,26 @@ __SQL_DISTINCT_VALUES_PREVIEW_PI =
     @param ServerType: Server Type (IP21/PI).
 
 */
-f_SQL_FINDTAGS = Function( {TagName, TagDescription, ServerType}, 
-	
-	If( ServerType == "IP21", 
+f_SQL_FINDTAGS = Function( {TagName, TagDescription, ServerType},
+
+	/* v3.0: REST is the default transport. On failure, fall back to the
+	   legacy OLEDB/ODBC path below — Windows only (drivers required). */
+	If( f_REST_Enabled(),
+		dt_TagTable = Try( f_REST_FindTags( TagName, TagDescription ), Empty() );
+		If( !Is Empty( dt_TagTable ),
+			If( N Rows( dt_TagTable ) == 0,
+				Close( dt_TagTable, nosave );
+				f_DialogError( "No matching data" );
+			);
+			Return( dt_TagTable );
+		);
+		f_Log( "WARNING", "REST tag search failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
+		If( !Host is( "Windows" ),
+			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." )
+		);
+	);
+
+	If( ServerType == "IP21",
 	
 	// IP21  ---------------------------
 	
@@ -259,9 +276,17 @@ f_SQL_FINDTAGS = Function( {TagName, TagDescription, ServerType},
     @return The local server time.
 */
 
-f_SQL_GET_LOCALTIME = Function( {ServerType}, 
-	
-	If( ServerType == "IP21", 
+f_SQL_GET_LOCALTIME = Function( {ServerType},
+
+	/* v3.0 REST path: use the client clock. The server clock was only used to
+	   pre-fill the date pickers; client time is close enough there, and it
+	   avoids one more REST round-trip. The OLEDB fallback keeps querying the
+	   server clock as before. */
+	If( f_REST_Enabled(),
+		Return( Today() )
+	);
+
+	If( ServerType == "IP21",
 	
 	// IP21  ---------------------------
 	
@@ -374,9 +399,32 @@ f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 
     @return The tag type.
 */
-f_SQL_GET_TAGTYPE = Function( {Tag, ServerType}, 
-	
-	If( ServerType == "IP21", 
+f_SQL_GET_TAGTYPE = Function( {Tag, ServerType},
+
+	/* v3.0: REST first. IP21 reuses the legacy SQL over REST; PI asks the
+	   Web API point search. Fallback to OLEDB/ODBC on Windows. */
+	If( f_REST_Enabled(),
+		If( ServerType == "IP21",
+			TagTypeRslt = Try(
+				dt_rest_type = f_IP21_REST_SQL( Substitute( __SQL_TAGTYPE_IP21, "VAR_TAGNAME", Tag ) );
+				rslt = Column( dt_rest_type, "tagtype" )[1];
+				Close( dt_rest_type, nosave );
+				rslt;
+			, Empty() )
+		,
+			TagTypeRslt = Try( f_REST_PI_TagType( Tag ), Empty() )
+		);
+		If( !Is Empty( TagTypeRslt ),
+			If( Is Missing( TagTypeRslt ), f_DialogError( "No tagtype found" ) );
+			Return( TagTypeRslt );
+		);
+		f_Log( "WARNING", "REST tagtype lookup failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
+		If( !Host is( "Windows" ),
+			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." )
+		);
+	);
+
+	If( ServerType == "IP21",
 	
 	// IP21 ----------------------------------
 	
@@ -442,9 +490,42 @@ f_SQL_GET_TAGTYPE = Function( {Tag, ServerType},
 
     @return A JMP DataTable with the distinct values of the tagnames for the specified start/end time and filters selected.
 */
-f_SQL_PREVIEW = Function( {TagName, Start, End, Filters, ServerType}, 
-	
-	If( ServerType == "IP21", 
+f_SQL_PREVIEW = Function( {TagName, Start, End, Filters, ServerType},
+
+	/* v3.0: REST first. IP21 reuses the legacy DISTINCT SQL over REST
+	   (filters included, server-side); PI lists distinct values via the Web
+	   API (registered filters not applied in preview — extraction applies
+	   them). Fallback to OLEDB/ODBC on Windows. */
+	If( f_REST_Enabled(),
+		If( ServerType == "IP21",
+			SQL_tag = Substitute( __SQL_DISTINCT_VALUES_PREVIEW_IP21,
+				"VAR_FILTER", Filters,
+				"VAR_REQUEST", Char( Request ),
+				"VAR_PERIOD", Char( NewPeriodNumValue ),
+				"VAR_TAGNAME", TagName,
+				"VAR_START_DATE", Start,
+				"VAR_END_DATE", End
+			);
+			dt_tagtable = Try( f_IP21_REST_SQL( SQL_tag ), Empty() );
+		,
+			dt_tagtable = Try( f_REST_PI_Preview( TagName, Start, End ), Empty() )
+		);
+		If( !Is Empty( dt_tagtable ),
+			If( N Rows( dt_tagtable ) == 0,
+				Close( dt_tagtable, nosave );
+				Try( PreviewWindow << close window() );
+				f_DialogError( "No matching data" );
+			);
+			Return( dt_tagtable );
+		);
+		f_Log( "WARNING", "REST preview failed - trying OLEDB/ODBC fallback (Windows only).", "REST" );
+		If( !Host is( "Windows" ),
+			Try( PreviewWindow << close window() );
+			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." );
+		);
+	);
+
+	If( ServerType == "IP21",
 	
 	// IP21 ----------------------------------
 	

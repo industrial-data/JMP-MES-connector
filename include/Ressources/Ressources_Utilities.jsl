@@ -1308,7 +1308,10 @@ f_SetUp4Extraction = Function( {ServerType},
 		);
 		
 	// PI - CHECK POWERSHELL -------------------------------------------------------------------
-	
+	// v3.0: only needed for the OLEDB fallback path; PowerShell/OLEDB tooling
+	// is Windows-only and useless when the PI Web API transport is active.
+		If( And( !f_REST_Enabled(), Host is( "Windows" ) ),
+
 		If( Not( File Exists( ps_path ) ),
 			f_Log( "WARNING", "Powershell Script file not found. Creating at:  " || Char( ps_path ) );
 			Save Text File( ps_path, SQL_OLEDB_PS );
@@ -1359,9 +1362,11 @@ f_SetUp4Extraction = Function( {ServerType},
 		,
 			f_Log( "INFO", "Connector found for the NetworkNode." )
 		);
-	, 
-	
-	
+
+		); // END If !f_REST_Enabled (PowerShell/OLEDB checks skipped on REST)
+	,
+
+
 	// IP21 - SET EXTRACT PARAMETERS -------------------------------------------------------------------
 	
 		Try(
@@ -1460,7 +1465,7 @@ f_RunExtraction = Function(
 	);
 					
 			
-	If( is_EN_num_format == 0,
+	If( And( is_EN_num_format == 0, Host is( "Windows" ) ),  // Windows-only preference
 		Preferences( Use JMP Locale Settings( 0 ) )
 	);
 	
@@ -1478,8 +1483,29 @@ f_RunExtraction = Function(
 	NCol_Criteria = Match( ServerType, "IP21", 8, "PI", 7 );
 
 
+	/* 1.2b. v3.0 - PI extraction via PI Web API (default path).
+	   The whole per-tag SQL loop below is replaced by one Python call that
+	   extracts all tags in parallel and returns the final wide table.
+	   On failure: fall back to the legacy OLEDB loop on Windows only. */
+
+	If( And( f_REST_Enabled(), ServerType == "PI" ),
+		tblAllTags = Try( f_RunExtraction_PI_REST( lstTags, StartFormat, EndFormat, Filters_AA ), Empty() );
+		If( !Is Empty( tblAllTags ),
+			If( N Rows( tblAllTags ) == 0,
+				Close( tblAllTags, nosave );
+				f_DialogError( "No matching data" );
+			);
+			Return( tblAllTags );
+		);
+		f_Log( "WARNING", "PI Web API extraction failed - trying OLEDB fallback (Windows only).", "REST" );
+		If( !Host is( "Windows" ),
+			f_DialogError( "Server connection failed (REST). No driver fallback available on macOS." )
+		);
+	);
+
+
 	/* 1.3. Extraction parameters */
-	
+
 	Try( f_SetUp4Extraction( ServerType ), f_DialogError( "Server connection failed" ) );
 	
 	
@@ -1495,12 +1521,15 @@ f_RunExtraction = Function(
 	
 	__SQL_EXTRACTION = f_SQL_EXTRACT_TAGS( StartFormat, EndFormat, __SQL_FILTERS, ServerType );
 	
+	// v3.0: the ODBC connection is only needed for the legacy (non-REST) IP21 path
 	If( ServerType == "IP21",
-		SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
-		Try(
-			dbc = Create Database Connection( SQL_connection_str ),
-			Close Database Connection( dbc );
-			f_DialogError( "Server connection failed" );
+		If( !f_REST_Enabled(),
+			SQL_connection_str = Substitute( __SQL_MES_CONNECTION, "VAR_MES", MES );
+			Try(
+				dbc = Create Database Connection( SQL_connection_str ),
+				Close Database Connection( dbc );
+				f_DialogError( "Server connection failed" );
+			);
 		);
 	,
 		__SQL_EXTRACTION = f_SQL_query_to_line( __SQL_EXTRACTION )
@@ -1532,7 +1561,7 @@ f_RunExtraction = Function(
 		lstTags = (Array_lsttags << Remove( Associative Array( lst_AlreadyExtractedtags ) ) << get keys)[Rank( Array_lsttags << get values )];
 		N_Remaining_tags = N Items( lstTags );
 		
-		If( ServerType == "IP21",
+		If( And( ServerType == "IP21", !f_REST_Enabled() ),
 			dbc = Create Database Connection( SQL_connection_str )
 		);
 	
@@ -1584,13 +1613,16 @@ f_RunExtraction = Function(
 			__SQL_EXTRACTION = Substitute( __SQL_EXTRACTION, "VAR_TAGNAME", TagName );
 			
 		// Send SQL Query
-			If( ServerType == "IP21", 
-			
+			If( ServerType == "IP21",
+
 				f_Log( "INFO", "<SQL Query> \!n\!n" || __SQL_EXTRACTION || "\!n\!n" );
-				//IP21 SQL QUERY
-				tblTag = Eval( Eval Expr( Execute SQL( dbc, __SQL_EXTRACTION, Expr( strTableVisibility ) ) ) );
+				//IP21 SQL QUERY - v3.0: same SQL, transport is REST by default, ODBC as fallback
+				If( f_REST_Enabled(),
+					tblTag = Try( f_IP21_REST_SQL( __SQL_EXTRACTION ), Empty() ),
+					tblTag = Eval( Eval Expr( Execute SQL( dbc, __SQL_EXTRACTION, Expr( strTableVisibility ) ) ) )
+				);
 				Try( tblTag << Set Name( "Tag loop extraction Results" ) );
-			, 
+			,
 				
 				// PI SQL QUERY
 				query_result = f_Convert_In_PowershellScript( ps_path, NetworkNode, __SQL_EXTRACTION );
@@ -2585,11 +2617,22 @@ f_UpdateMESInfo = Function( {},
 		ShortName = AA.ServersInfo[MES_FullName]["ShortName"];
 		NetworkNode = AA.ServersInfo[MES_FullName]["NetworkNode"];
 		ServerExtension = AA.ServersInfo[MES_FullName]["Extension"];
-	
+
+	// v3.0 REST fields (empty when the server list has no WebAPI info yet)
+		WebAPIURL = Try( AA.ServersInfo[MES_FullName]["WebAPI_URL"], "" );
+		DAServer = Try( AA.ServersInfo[MES_FullName]["DAServer"], "" );
+		If( Is Missing( WebAPIURL ), WebAPIURL = "" );
+		If( Is Missing( DAServer ), DAServer = "" );
+		If( And( DAServer == "", WebAPIURL != "" ),
+			DAServer = MES  // sensible default: DA/data source name = host name
+		);
+
 	// Update textbox with Server Address / Extension / Shortname
 		txtbox_ServerAddress << Set Text( MES );
 		txtbox_ServerExtension << Set Text( ServerExtension );
 		txtbox_Shortname << Set Text( ShortName );
+		Try( txtbox_WebAPIURL << Set Text( Char( WebAPIURL ) ) );
+		Try( txtbox_DAServer << Set Text( Char( DAServer ) ) );
 	
 	// UPdate radio box IP21 /PI
 		If( ServerType == "IP21",

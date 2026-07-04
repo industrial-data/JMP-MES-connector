@@ -1,0 +1,375 @@
+/***********************************************************
+ * General Information
+ *
+ * Script Title    : Ressources REST (v3.0)
+ *
+ * Description:
+ * Bridge between JSL and the Python REST extraction layer
+ * (include/Ressources/python/mes_connector — see its README.md).
+ *
+ * v3.0 architecture:
+ *  - REST is the DEFAULT transport for both server types.
+ *  - IP21 : the legacy SQLplus queries (Ressources_SQL.jsl) are kept
+ *           unchanged and POSTed to Aspen's Process Data REST service
+ *           (AtProcessDataREST.dll/SQL) instead of going through ODBC.
+ *  - PI   : native PI Web API (search / interpolated / recorded / summary),
+ *           ported from the validated notebook in Ressources/python.
+ *  - The legacy OLEDB/ODBC path remains as a WINDOWS-ONLY fallback when the
+ *    REST call fails or no WebAPI URL is configured for the server.
+ *
+ * Server list requirements (MES_servers_list.xlsx):
+ *  - WebAPI_URL : PI  -> https://<host>/piwebapi
+ *                 IP21-> http://<host>/ProcessData/AtProcessDataREST.dll
+ *  - DAServer   : PI  -> Data Archive server name (as in PI System Explorer)
+ *                 IP21-> ADSA data source name (usually the IP21 host name)
+ *
+ * Auth: SSO first (Windows SSPI / Kerberos); on 401 the Python layer raises
+ * AuthRequired and f_REST_PyCall shows a JSL login dialog, stores the
+ * credentials in Python memory (never on disk) and retries once.
+ ************************************************************/
+
+
+/****************************************************
+*  I. STATE & AVAILABILITY
+******************************************************/
+
+REST_PY_INITIALIZED = 0;
+If( Is Empty( int.UseREST ), int.UseREST = 1 );   // config.jsl can override (0 = force legacy OLEDB)
+If( Is Empty( WebAPIURL ), WebAPIURL = "" );
+If( Is Empty( DAServer ), DAServer = "" );
+
+/* REST is used when enabled in config AND the selected server has a WebAPI URL */
+f_REST_Enabled = Function( {},
+	Try( And( int.UseREST == 1, Trim( Char( WebAPIURL ) ) != "" ), 0 )
+);
+
+
+/****************************************************
+*  II. PYTHON SESSION
+******************************************************/
+
+/* Put the add-in's python folder on sys.path (once per JMP session) */
+f_REST_InitPython = Function( {},
+	If( REST_PY_INITIALIZED == 1, Return( 1 ) );
+	If( Host is( "Windows" ),
+		rest_pkg_path = Convert File Path( strPath || "include/Ressources/python", windows ),
+		rest_pkg_path = Convert File Path( strPath || "include/Ressources/python", posix )
+	);
+	Python Send( rest_pkg_path );
+	Python Submit( "\[
+import sys
+if rest_pkg_path not in sys.path:
+    sys.path.insert(0, rest_pkg_path)
+]\" );
+	REST_PY_INITIALIZED = 1;
+	f_Log( "INFO", "Python REST layer initialized - " || rest_pkg_path, "REST" );
+);
+
+
+/* Modal login dialog shown when the server answers 401 (SSO not accepted).
+   Returns {user, password}; user == "" means the user cancelled. */
+f_REST_Login = Function( {rest_host},
+	login_result = New Window( "Server login",
+		<<Modal,
+		<<Return Result,
+		V List Box(
+			Border Box( Left( 10 ), Right( 10 ), Top( 10 ),
+				Text Box( "The server '" || Char( rest_host ) || "' requires a login (SSO not available)." )
+			),
+			Spacer Box( Size( 10, 10 ) ),
+			Border Box( Left( 10 ),
+				Lineup Box( N Col( 2 ),
+					Text Box( "Username:" ), teb_rest_user = Text Edit Box( "", <<Set Width( 220 ) ),
+					Text Box( "Password:" ), teb_rest_pwd = Text Edit Box( "", <<Set Width( 220 ), <<Password Style( 1 ) )
+				)
+			),
+			Spacer Box( Size( 10, 10 ) ),
+			H Center Box( H List Box( Button Box( "OK" ), Button Box( "Cancel" ) ) )
+		)
+	);
+	If( login_result["Button"] == 1,
+		Eval List( {login_result["teb_rest_user"], login_result["teb_rest_pwd"]} ),
+		{"", ""}
+	);
+);
+
+
+/*
+    f_REST_PyCall Function
+
+    Core wrapper for every JSL -> Python call.
+
+    @param py_body: python statements that must assign a pandas DataFrame to
+                    `rest_df`. The mes_connector package is imported as `mc`.
+                    Input values must have been passed beforehand with
+                    Python Send( rest_xxx ).
+
+    Behavior: runs the code, converts AuthRequired into a login dialog +
+    one retry, converts any other python exception into a JSL Throw (so the
+    caller's Try() can fall back to the legacy OLEDB path).
+
+    @return A JMP data table built from rest_df.
+*/
+f_REST_PyCall = Function( {py_body},
+
+	f_REST_InitPython();
+
+	// Indent the body so it sits inside the try: block
+	py_full = "\[
+import pandas as pd
+rest_err = ""
+rest_df = pd.DataFrame()
+try:
+    from mes_connector.auth import AuthRequired
+except Exception:
+    class AuthRequired(Exception):
+        pass
+try:
+    import mes_connector as mc
+    ]\" || Substitute( py_body, "\!n", "\!n    " ) || "\[
+
+except AuthRequired as _ex:
+    rest_err = "AUTH:" + str(_ex)
+except Exception as _ex:
+    rest_err = "ERROR:" + str(_ex)
+]\";
+
+	rest_done = 0;
+	rest_try = 0;
+	While( And( rest_done == 0, rest_try <= 2 ),
+		rest_try++;
+		Python Submit( py_full );
+		rest_err = Python Get( rest_err );
+		If( Starts With( Char( rest_err ), "AUTH:" ),
+			// 401 -> ask for credentials and retry the same call
+			rest_host = Substr( rest_err, 6 );
+			{rest_user, rest_pwd} = f_REST_Login( rest_host );
+			If( rest_user == "",
+				rest_done = 1
+			,
+				Python Send( rest_host );
+				Python Send( rest_user );
+				Python Send( rest_pwd );
+				Python Submit( "\[
+import mes_connector as mc
+mc.set_credentials(rest_host, rest_user, rest_pwd)
+]\" );
+			);
+		,
+			rest_done = 1
+		);
+	);
+
+	If( Char( rest_err ) != "",
+		f_Log( "ERROR", "REST call failed - " || Char( rest_err ), "REST" );
+		Throw( "REST: " || Char( rest_err ) );
+	);
+
+	Return( Python Get( rest_df ) );
+);
+
+
+/****************************************************
+*  III. HIGH-LEVEL CALLS (used by Ressources_SQL.jsl dispatchers)
+******************************************************/
+
+/* Tag search. Returns a table with columns tagnames/descriptions/units/type
+   (identical shape to the legacy SQL search — the GUI depends on it). */
+f_REST_FindTags = Function( {TagName, TagDescription},
+
+	rest_base = Char( WebAPIURL );
+	rest_da = Char( DAServer );
+	Python Send( rest_base );
+	Python Send( rest_da );
+
+	If( ServerType == "IP21",
+		// IP21: reuse the UNCHANGED legacy search SQL, wrapped in REST
+		rest_sql = Substitute( __SQL_FINDTAGS_IP21, "VAR_TAGNAME", TagName, "VAR_DESCRIPTION", TagDescription );
+		f_Log( "INFO", "<SQL via REST>  \!n\!n" || rest_sql || "\!n\!n", "REST" );
+		Python Send( rest_sql );
+		dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)" );
+	,
+		// PI: native PI Web API point search
+		rest_name = Char( TagName );
+		rest_desc = Char( TagDescription );
+		Python Send( rest_name );
+		Python Send( rest_desc );
+		dt_rest = f_REST_PyCall( "rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc)" );
+	);
+
+	dt_rest << Set Name( "f_REST_FINDTAGS Results" );
+	dt_rest << Show Window( 0 );
+	Return( dt_rest );
+);
+
+
+/* Run any SQLplus query on IP21 through the REST wrapper (v3.0 default
+   transport — same SQL text as the ODBC path). Returns the result table. */
+f_IP21_REST_SQL = Function( {SQL_query},
+	rest_base = Char( WebAPIURL );
+	rest_da = Char( DAServer );
+	rest_sql = SQL_query;
+	Python Send( rest_base );
+	Python Send( rest_da );
+	Python Send( rest_sql );
+	dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)" );
+	dt_rest << Show Window( 0 );
+	Return( dt_rest );
+);
+
+
+/* Tag type for one PI tag via the Web API (exact-name point search). */
+f_REST_PI_TagType = Function( {Tag},
+	rest_base = Char( WebAPIURL );
+	rest_da = Char( DAServer );
+	rest_name = Char( Tag );
+	Python Send( rest_base );
+	Python Send( rest_da );
+	Python Send( rest_name );
+	dt_rest = f_REST_PyCall(
+		"rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, '')\!nrest_df = rest_df[rest_df['tagnames'] == rest_name].head(1)"
+	);
+	If( N Rows( dt_rest ) == 0,
+		Close( dt_rest, nosave );
+		f_DialogError( "No tagtype found" );
+	);
+	TagTypeRslt = Column( dt_rest, "type" )[1];
+	Close( dt_rest, nosave );
+	Return( TagTypeRslt );
+);
+
+
+/* Distinct values of one PI tag over the selected window (used by Preview).
+   NOTE: registered filters are not applied in the REST preview (they are in
+   the final extraction); the preview's purpose is to list possible values. */
+f_REST_PI_Preview = Function( {TagName, StartFormat, EndFormat},
+	rest_base = Char( WebAPIURL );
+	rest_da = Char( DAServer );
+	rest_name = Char( TagName );
+	rest_start = Char( StartFormat );
+	rest_end = Char( EndFormat );
+	rest_interval = NewPeriodNumValue_s;
+	Python Send( rest_base );
+	Python Send( rest_da );
+	Python Send( rest_name );
+	Python Send( rest_start );
+	Python Send( rest_end );
+	Python Send( rest_interval );
+	dt_rest = f_REST_PyCall(
+		"rest_df = mc.pi_distinct_values(rest_base, rest_da, rest_name, rest_start, rest_end, int(rest_interval))"
+	);
+	dt_rest << Set Name( "f_SQL_PREVIEW Results" );
+	Return( dt_rest );
+);
+
+
+/****************************************************
+*  IV. FILTER SERIALIZATION
+******************************************************/
+
+/* Escape a string for inclusion inside a JSON string literal */
+f_JSON_Escape = Function( {str_in},
+	str_out = Substitute( Char( str_in ), "\!\", "\!\\!\" );
+	str_out = Substitute( str_out, "\!"", "\!\\!"" );
+	Return( str_out );
+);
+
+/*
+    f_Filters_ToJSON Function
+
+    Serializes the GUI's Filters_AA structure to the JSON contract expected by
+    mes_connector.filters.parse_filters_json (see filters.py for the format).
+    Structure of one Filters_AA entry (inherited from v2.x):
+      Filter[1] = label, or {label1, label2} when two filters were nested
+      Filter[2] = tag type(s)
+      Filter[3] = {comp1, value1} or {comp1, value1, comp2, value2}
+*/
+f_Filters_ToJSON = Function( {Filters_AA, Condition},
+
+	Filters_Keys = Filters_AA << Get Keys;
+	If( N Items( Filters_Keys ) == 0, Return( "" ) );
+
+	lst_json = List();
+	For( i = 1, i <= N Items( Filters_Keys ), i++,
+		Filter = Filters_AA[Filters_Keys[i]];
+
+		If( Is List( Filter[1] ),
+			// nested pair: two tags, two comparisons
+			Tag1 = f_Remove_UnitDescription( Filter[1][1], TagSelect_AA );
+			Tag2 = f_Remove_UnitDescription( Filter[1][2], TagSelect_AA );
+			str_tags = "[\!"" || f_JSON_Escape( Tag1 ) || "\!",\!"" || f_JSON_Escape( Tag2 ) || "\!"]";
+			str_comps = "[\!"" || f_JSON_Escape( Filter[3][1] ) || "\!",\!"" || f_JSON_Escape( Filter[3][3] ) || "\!"]";
+			str_vals = "[\!"" || f_JSON_Escape( Filter[3][2] ) || "\!",\!"" || f_JSON_Escape( Filter[3][4] ) || "\!"]";
+		,
+			Tag1 = f_Remove_UnitDescription( Filter[1], TagSelect_AA );
+			str_tags = "[\!"" || f_JSON_Escape( Tag1 ) || "\!"]";
+			str_comps = "[\!"" || f_JSON_Escape( Filter[3][1] ) || "\!"]";
+			str_vals = "[\!"" || f_JSON_Escape( Filter[3][2] ) || "\!"]";
+		);
+
+		Insert Into( lst_json, "{\!"tags\!":" || str_tags || ",\!"comps\!":" || str_comps || ",\!"values\!":" || str_vals || "}" );
+	);
+
+	Return( "{\!"condition\!":\!"" || Char( Condition ) || "\!",\!"filters\!":[" || Concat Items( lst_json, "," ) || "]}" );
+);
+
+
+/****************************************************
+*  V. PI EXTRACTION VIA PI WEB API
+******************************************************/
+
+/*
+    f_RunExtraction_PI_REST Function
+
+    Full PI extraction over the PI Web API. Replaces the per-tag SQL loop:
+    the Python layer extracts all tags in parallel (max 5 workers), retries
+    failures, applies the registered filters (server-side filterExpression
+    when possible, pandas otherwise) and returns ONE wide table:
+        TS (server-local), TS_UTC, one column per selected tag label.
+
+    Sets the same globals as the legacy path so the formatting section of
+    EXPR_DATA_EXTRACTION works unchanged: tblAllTags, TagExtract_AA, TagType_AA.
+*/
+f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA},
+
+	section = "DATA EXTRACTION (PI WEB API)";
+	f_Log( "INFO", "START PI Web API extraction - " || Char( N Items( lstTags ) ) || " tags.", section );
+
+	// Labels shown in the GUI (tag + description + unit + {type}) become the
+	// output column names, like in the legacy pipeline.
+	lstLabels = lstTagNames_UnitDesc;   // global, set in EXPR_DATA_EXTRACTION 1.3
+
+	TagExtract_AA = Associative Array();
+	TagType_AA = Associative Array();
+	For( i = 1, i <= N Items( lstTags ), i++,
+		TagExtract_AA[lstLabels[i]] = lstTags[i];
+		Try( TagType_AA[lstLabels[i]] = Word( 2, lstLabels[i], "{}" ) );
+	);
+
+	rest_base = Char( WebAPIURL );
+	rest_da = Char( DAServer );
+	rest_tags = lstTags;
+	rest_labels = lstLabels;
+	rest_method = Char( ExtractionMethod );
+	rest_start = Char( StartFormat );
+	rest_end = Char( EndFormat );
+	rest_interval = NewPeriodNumValue_s;
+	rest_filters = f_Filters_ToJSON( Filters_AA, Condition );
+
+	Python Send( rest_base );
+	Python Send( rest_da );
+	Python Send( rest_tags );
+	Python Send( rest_labels );
+	Python Send( rest_method );
+	Python Send( rest_start );
+	Python Send( rest_end );
+	Python Send( rest_interval );
+	Python Send( rest_filters );
+
+	tblAllTags = f_REST_PyCall(
+		"rest_df = mc.pi_extract(rest_base, rest_da, list(rest_tags), list(rest_labels), rest_method, rest_start, rest_end, int(rest_interval), rest_filters)"
+	);
+
+	f_Log( "INFO", "END PI Web API extraction - " || Char( N Rows( tblAllTags ) ) || " rows.", section );
+	Return( tblAllTags );
+);

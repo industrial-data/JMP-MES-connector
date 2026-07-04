@@ -4,9 +4,28 @@
 
 A JMP add-in ("MES Data Retrieval") written in JSL (JMP Scripting Language) that extracts
 time-series process data from manufacturing historians: **Aspentech InfoPlus.21 (IP21)**
-via SQLplus ODBC, and **OSIsoft/Aveva PI** via the PI OLEDB Enterprise driver. Users pick
-a server, search tags, set a time range and extraction method (Interpolated / Average /
-Actual), optionally add filters, and get the data as a JMP table.
+and **OSIsoft/Aveva PI**. Users pick a server, search tags, set a time range and
+extraction method (Interpolated / Average / Actual), optionally add filters, and get the
+data as a JMP table.
+
+**v3.0 transport architecture** (REST by default, drivers as fallback):
+
+- **PI** → PI Web API (`https://<host>/piwebapi`), implemented in the Python package
+  `include/Ressources/python/mes_connector/` and called from JSL via JMP 19's embedded
+  Python (`include/Ressources/Ressources_REST.jsl` is the bridge). Simple filters are
+  pushed server-side as PI `filterExpression`; `Like`/`Not Like`/`In` are applied in pandas.
+- **IP21** → the *unchanged* legacy SQLplus queries (`Ressources_SQL.jsl`) are POSTed to
+  Aspen's Process Data REST service (`http://<host>/ProcessData/AtProcessDataREST.dll/SQL`)
+  instead of going through ODBC. Filters stay fully server-side (they're in the SQL).
+- **Fallback**: the v2.x OLEDB (PI, via PowerShell) / ODBC (IP21) path still exists and is
+  used when REST fails or no `WebAPI_URL` is configured — **Windows only**.
+- The server list (`MES_servers_list.xlsx`) has two v3.0 columns: `WebAPI_URL` and
+  `DAServer` (PI Data Archive name / IP21 ADSA data source name). Also editable in the GUI
+  ("Edit server address" panel). `config.jsl` has `int.UseREST = 1` to force legacy mode.
+- Auth: SSO first (SSPI/Kerberos), JSL login dialog on 401 (see `mes_connector/auth.py`).
+
+Read `include/Ressources/python/mes_connector/README.md` before touching the Python layer —
+it documents the JSL↔Python contracts (column names the GUI depends on).
 
 For deeper background, read the PDFs in `doc/`:
 

@@ -2,3 +2,4 @@ archive/.DS_Store
 deployment/.DS_Store
 .DS_Store
 .DS_Store
+__pycache__/
