@@ -147,7 +147,10 @@ EXPR_PREVIEW = Expr(
 	f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 	
 	If( is_checked == 1,
-		NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+		If( ServerExtension == "",
+			NetworkNode = Char( MES ),
+			NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+		)
 	);
 	
 	// --------------------------------- EXTRACTION INFORMATION  --------------------------------- //	

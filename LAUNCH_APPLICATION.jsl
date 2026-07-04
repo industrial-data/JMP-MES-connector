@@ -342,17 +342,20 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 
 												/* This server should be pre-selected in the future */
-												Save Text File(
+												Try( Save Text File(
 													str.PathLastServerSelected,
 													Eval Insert(
 														"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";"
 													)
-												);
+												) );
 
 		
 												/* Check if server adress was edited by the user */
 												If( is_checked == 1,
-													NetworkNode = Char( MES ) || "." || Char( ServerExtension );
+													If( ServerExtension == "",
+														NetworkNode = Char( MES ),
+														NetworkNode = Char( MES ) || "." || Char( ServerExtension )
+													);
 													f_Log( "INFO", "User has edited the server address - " || NetworkNode );
 												);
 												Eval( f_button.find_tags );
@@ -950,7 +953,10 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												str.ShortName = txtbox_Shortname << Get text;
 												str.ServerType = rdbox_ServerType << Get Selected;
 												If( int.EditAdress == 1,
-													str.NetworkNode = Char( str.MES ) || "." || Char( str.ServerExtension )
+													If( str.ServerExtension == "",
+														str.NetworkNode = Char( str.MES ),
+														str.NetworkNode = Char( str.MES ) || "." || Char( str.ServerExtension )
+													)
 												);
 												
 												/* Get Tags ordered */
@@ -1336,8 +1342,8 @@ NewWindowSize = WinTag << Get Window Size();
 If( Or( NewWindowSize[1] != WindowSize[1], NewWindowSize[2] != WindowSize[2] ),
 	f_Log( "INFO", "Update Window size, OLD - " || Char( WindowSize ) || " / NEW - " || Char( NewWindowSize ) );
 	WindowSize = NewWindowSize;
-	Save Text File( PathWindowSize, "WindowSize = " || Char( WindowSize ) );
-	
+	Try( Save Text File( PathWindowSize, "WindowSize = " || Char( WindowSize ) ) );
+
 );
 
 
