@@ -49,8 +49,12 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 /* 1.2. Source JSL dependencies */
 
 	If( !(Directory Exists( strPath )),
-		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval)" );
-		If( Is Missing( strPath ),
+		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval.OS2.2)" );
+		// DEV mode: table script run without the add-in installed
+		If( strPath == "" | !File Exists( strPath || "config/config.jsl" ),
+			strPath = Get Default Directory()
+		);
+		If( !File Exists( strPath || "config/config.jsl" ),
 			New Window( "Error",
 				<<modal,
 				<<Size( 300, 100 ),
@@ -108,8 +112,6 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	Request = Expr( Request );
 	ValueIP21 = Expr( ValueIP21 );
 	TableIP21 = Expr( TableIP21 );
-	TablePI = Expr( TablePI );
-	SQL_InterpolatedPI = Expr( SQL_InterpolatedPI );
 	local_to_UTC_time_diff_in_s = Expr(
 		local_to_UTC_time_diff_in_s
 	);
@@ -416,25 +418,24 @@ EXPR_UPDATE_REFRESH_EXTRACT = Expr(
 
 /* 3.3. REFRESH */
 			
-	If( meth == "Refresh", 
-	
+	If( meth == "Refresh",
+
 		f_Log( "INFO", "START REFRESH Script", section );
-		
-		// Delete all rows
+
+		f_Log( "INFO", "New Start date (yyyy-mm-ddThh:mm:ss) - " || NewStartFormat, "REFRESH" );
+		f_Log( "INFO", "New End date (yyyy-mm-ddThh:mm:ss) - " || NewEndFormat, "REFRESH" );
+
+		tblUpdatedTags = f_RunExtraction( lstTags, NewStartFormat, NewEndFormat, ServerType, Filters_AA );
+
+		// Only wipe the existing rows AFTER the extraction succeeded, so a
+		// failed refresh never destroys the data already in the table.
 		dt << SelectRows( Index( 1, N Rows( dt ) ) );
 		dt << DeleteRows();
 		dt << Clear Select();
-		
-		
-		
-		f_Log( "INFO", "New Start date (yyyy-mm-ddThh:mm:ss) - " || NewStartFormat, "REFRESH" );
-		f_Log( "INFO", "New End date (yyyy-mm-ddThh:mm:ss) - " || NewEndFormat, "REFRESH" );
-		
-		tblUpdatedTags = f_RunExtraction( lstTags, NewStartFormat, NewEndFormat, ServerType, Filters_AA );
-		
+
 		f_Log( "INFO", "END REFRESH Script", section );
 
-	, 
+	,
 
 /* 3.4. UPDATE */
 

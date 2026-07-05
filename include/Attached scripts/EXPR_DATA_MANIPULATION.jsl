@@ -42,8 +42,12 @@ EXPR_DATA_MANIP = Expr(
 /* 1.2. Source JSL dependencies */
 
 	If( !(Directory Exists( strPath )),
-		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval)" );
-		If( Is Missing( strPath ),
+		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval.OS2.2)" );
+		// DEV mode: table script run without the add-in installed
+		If( strPath == "" | !File Exists( strPath || "config/config.jsl" ),
+			strPath = Get Default Directory()
+		);
+		If( !File Exists( strPath || "config/config.jsl" ),
 			New Window( "Error",
 				<<modal,
 				<<OnOpen( Window( "Error" ) << moveWindow( 800, 400 ) ),

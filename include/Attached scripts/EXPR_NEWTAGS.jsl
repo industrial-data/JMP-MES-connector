@@ -46,8 +46,12 @@ EXPR_ADDTAGS_UI = Expr(
 /* 1.2. Source JSL dependencies */
 
 	If( !(Directory Exists( strPath )),
-		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval)" );
-		If( Is Missing( strPath ),
+		strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval.OS2.2)" );
+		// DEV mode: table script run without the add-in installed
+		If( strPath == "" | !File Exists( strPath || "config/config.jsl" ),
+			strPath = Get Default Directory()
+		);
+		If( !File Exists( strPath || "config/config.jsl" ),
 			New Window( "Error",
 				<<modal,
 				<<Size( 300, 100 ),
@@ -105,8 +109,6 @@ EXPR_ADDTAGS_UI = Expr(
 	Request = Expr( Request );
 	ValueIP21 = Expr( ValueIP21 );
 	TableIP21 = Expr( TableIP21 );
-	TablePI = Expr( TablePI );
-	SQL_InterpolatedPI = Expr( SQL_InterpolatedPI );
 	local_to_UTC_time_diff_in_s = Expr(
 		local_to_UTC_time_diff_in_s
 	);

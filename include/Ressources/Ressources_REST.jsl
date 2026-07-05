@@ -172,6 +172,10 @@ except Exception as _ex:
    user never types them again on this machine. */
 f_REST_Login = Function( {rest_host},
 	str.vault_name = If( Host is( "Windows" ), "Windows Credential Manager", "macOS Keychain" );
+	// Note: list literals {} are NOT evaluated in JSL — the checkbox label
+	// must be a pre-built string wrapped with Eval List, otherwise the raw
+	// concat expression shows up as the label.
+	str.remember_label = "Remember on this computer (" || str.vault_name || ")";
 	login_result = New Window( "Server login",
 		<<Modal,
 		<<Return Result,
@@ -187,7 +191,7 @@ f_REST_Login = Function( {rest_host},
 				)
 			),
 			Border Box( Left( 10 ), Top( 6 ),
-				chk_rest_remember = Check Box( {"Remember on this computer (" || str.vault_name || ")"} )
+				chk_rest_remember = Check Box( Eval List( {str.remember_label} ) )
 			),
 			Spacer Box( Size( 10, 10 ) ),
 			H Center Box( H List Box( Button Box( "OK" ), Button Box( "Cancel" ) ) )
@@ -461,8 +465,25 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 	f_Log( "INFO", "START PI Web API extraction - " || Char( N Items( lstTags ) ) || " tags.", section );
 
 	// Labels shown in the GUI (tag + description + unit + {type}) become the
-	// output column names, like in the legacy pipeline.
-	lstLabels = lstTagNames_UnitDesc;   // global, set in EXPR_DATA_EXTRACTION 1.3
+	// output column names, like in the legacy pipeline. In the main GUI the
+	// selection list (lstTagNames_UnitDesc) is available; when called from a
+	// saved table's Update/Refresh or Add-tags script it is not, so derive
+	// the labels from TagSelect_AA (label -> tagname), falling back to the
+	// bare tag name.
+	use_selection = Try( N Items( lstTagNames_UnitDesc ) == N Items( lstTags ), 0 );
+	If( use_selection,
+		lstLabels = lstTagNames_UnitDesc
+	,
+		lstLabels = List();
+		ts_keys = TagSelect_AA << Get Keys;
+		ts_vals = TagSelect_AA << Get Values;
+		For( i = 1, i <= N Items( lstTags ), i++,
+			ind = As List( Loc( ts_vals, lstTags[i] ) );
+			Insert Into( lstLabels,
+				If( N Items( ind ) > 0, ts_keys[ind[1]], Char( lstTags[i] ) )
+			);
+		);
+	);
 
 	TagExtract_AA = Associative Array();
 	TagType_AA = Associative Array();

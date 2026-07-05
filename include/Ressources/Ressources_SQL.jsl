@@ -149,14 +149,17 @@ f_SQL_GET_LOCALTIME = Function( {ServerType},
 */
 f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 
+	// Use the Start/End PARAMETERS, not the StartFormat/EndFormat globals:
+	// callers like Update/Refresh pass a new window while the globals still
+	// hold the original extraction dates.
 	__SQL_EXTRACTION = Substitute( __SQL_EXTRACTAGS_IP21,
 		"VAR_VALUE", ValueIP21,
 		"VAR_TABLE", TableIP21,
 		"VAR_FILTER", Filter,
 		"VAR_REQUEST", Char( Request ),
 		"VAR_PERIOD", Char( NewPeriodNumValue ),
-		"VAR_START_DATE", StartFormat,
-		"VAR_END_DATE", EndFormat
+		"VAR_START_DATE", Start,
+		"VAR_END_DATE", End
 	);
 
 	If( ValueIP21 == "AVG",
