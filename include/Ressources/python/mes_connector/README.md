@@ -51,6 +51,23 @@ scheme and trailing `/`; a bare host is completed to `/piwebapi` or
 end up pointing at that .dll), `PI_AF_Server` (optional, PI only — future AF
 search).
 
+## Authentication & credential security
+
+Order of attempts: SSO (Windows SSPI / Kerberos) → credentials stored in the
+**OS credential vault** (Windows Credential Manager / macOS Keychain, via
+`keyring`) → JSL login dialog. The dialog's "Remember on this computer" box
+writes the credentials to the vault so the user never types them again.
+
+Compliance measures (see `auth.py` for the full list):
+- secrets live only in the OS vault (encrypted at rest, per-user) and process
+  memory — never in files, logs, JMP variables, or URLs;
+- basic credentials are refused over plain `http://` (SSO is still allowed
+  there — Kerberos never sends the password);
+- TLS certificates are verified by default against the OS certificate store
+  (`truststore`, so corporate CAs work); `int.TLSVerify = 0` in config.jsl is
+  a logged opt-out for self-signed plant servers;
+- a stored password that gets a 401 is deleted from the vault immediately.
+
 ## Debugging
 
 Every HTTP request URL is `print()`ed so it appears in the JMP log (v2.x did

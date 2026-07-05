@@ -29,7 +29,11 @@ data as a JMP table.
   for report/recall compatibility).
 - Debugging: the Python layer prints every request URL into the JMP log; PI extraction
   runs chunked (5 tags per call) to drive the legacy `progress:` bar.
-- Auth: SSO first (SSPI/Kerberos), JSL login dialog on 401 (see `mes_connector/auth.py`).
+- Auth: SSO first (SSPI/Kerberos), then OS-vault credentials (Windows Credential
+  Manager / macOS Keychain via `keyring`; "Remember on this computer" in the login
+  dialog), then the JSL login dialog. Basic auth refused over plain http; TLS verified
+  by default via the OS trust store (`int.TLSVerify = 0` opts out for self-signed
+  certs). Details in `mes_connector/auth.py`.
 
 Read `include/Ressources/python/mes_connector/README.md` before touching the Python layer —
 it documents the JSL↔Python contracts (column names the GUI depends on).

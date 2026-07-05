@@ -48,7 +48,13 @@ import pandas as pd
 from . import filters as _filters
 from . import ip21_rest as _ip21
 from . import pi_webapi as _pi
-from .auth import AuthRequired, clear_credentials, set_credentials  # noqa: F401 (re-exported for JSL)
+from .auth import (  # noqa: F401 (re-exported for JSL)
+    AuthRequired,
+    clear_credentials,
+    configure_tls,
+    forget_credentials,
+    set_credentials,
+)
 
 __version__ = "3.0.0"
 

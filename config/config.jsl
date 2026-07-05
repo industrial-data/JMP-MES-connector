@@ -30,6 +30,12 @@
  
 /* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
  Version = "2026@ V.3.0.0";
+
+/* TLS certificate verification for the REST connections (1 = verify, default).
+   Corporate CAs are honored via the OS certificate store. Only set to 0 for
+   servers with self-signed certificates — with 0, a password sent over the
+   connection could be intercepted by a man-in-the-middle on the network. */
+int.TLSVerify = 1;
  
  
  // --------------------------------- 2. PATHS --------------------------------- // 

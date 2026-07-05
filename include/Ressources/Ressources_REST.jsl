@@ -102,15 +102,23 @@ f_REST_InitPython = Function( {},
 	Python Init();
 
 	// --- 2+3) sys.path + import check, path embedded in the source ------
+	If( Is Empty( int.TLSVerify ), int.TLSVerify = 1 );
 	str.init_code = Eval Insert( "\[
 import sys
 rest_status = ""
+rest_optdeps = ""
 _pkg = "^rest_pkg_path^"
 if _pkg not in sys.path:
     sys.path.insert(0, _pkg)
 try:
     import mes_connector
+    mes_connector.configure_tls(bool(^int.TLSVerify^))
     rest_status = "OK " + mes_connector.__version__ + " | python " + sys.version.split()[0] + " | " + _pkg
+    for _opt in ("keyring", "truststore"):
+        try:
+            __import__(_opt)
+        except ImportError:
+            rest_optdeps += _opt + " "
 except Exception as _ex:
     rest_status = "IMPORT_ERROR: " + repr(_ex) + " | pkg=" + _pkg
 ]\" );
@@ -135,6 +143,16 @@ except Exception as _ex:
 		f_DialogError( "Python setup failed: " || Char( rest_status ) )
 	);
 
+	// Optional packages: keyring (remember passwords in the OS credential
+	// vault) and truststore (validate TLS against the OS certificate store,
+	// so corporate CAs work). Install once when missing; everything still
+	// works without them (login dialog each session / certifi CA bundle).
+	rest_optdeps = Try( Char( Python Get( rest_optdeps ) ), "" );
+	If( Trim( rest_optdeps ) != "",
+		f_Log( "INFO", "Installing optional python packages: " || rest_optdeps, "REST" );
+		Try( Python Install Packages( "keyring truststore" ) );
+	);
+
 	// --- 5) Verify the Python Send/Get mechanism the bridge relies on ---
 	rest_probe = "ping";
 	Python Send( rest_probe );
@@ -148,8 +166,12 @@ except Exception as _ex:
 
 
 /* Modal login dialog shown when the server answers 401 (SSO not accepted).
-   Returns {user, password}; user == "" means the user cancelled. */
+   Returns {user, password, remember}; user == "" means the user cancelled.
+   With remember = 1 the Python layer stores the credentials in the OS
+   credential vault (Windows Credential Manager / macOS Keychain) so the
+   user never types them again on this machine. */
 f_REST_Login = Function( {rest_host},
+	str.vault_name = If( Host is( "Windows" ), "Windows Credential Manager", "macOS Keychain" );
 	login_result = New Window( "Server login",
 		<<Modal,
 		<<Return Result,
@@ -164,13 +186,20 @@ f_REST_Login = Function( {rest_host},
 					Text Box( "Password:" ), teb_rest_pwd = Text Edit Box( "", <<Set Width( 220 ), <<Password Style( 1 ) )
 				)
 			),
+			Border Box( Left( 10 ), Top( 6 ),
+				chk_rest_remember = Check Box( {"Remember on this computer (" || str.vault_name || ")"} )
+			),
 			Spacer Box( Size( 10, 10 ) ),
 			H Center Box( H List Box( Button Box( "OK" ), Button Box( "Cancel" ) ) )
 		)
 	);
 	If( login_result["Button"] == 1,
-		Eval List( {login_result["teb_rest_user"], login_result["teb_rest_pwd"]} ),
-		{"", ""}
+		// checkbox state may arrive as a scalar or as a list/matrix of selected items
+		int.remember = Try( (login_result["chk_rest_remember"])[1], Try( Num( login_result["chk_rest_remember"] ), 0 ) );
+		If( Is Missing( int.remember ), int.remember = 0 );
+		Eval List( {login_result["teb_rest_user"], login_result["teb_rest_pwd"], int.remember} );
+	,
+		{"", "", 0}
 	);
 );
 
@@ -224,19 +253,24 @@ except Exception as _ex:
 		Python Submit( py_full );
 		rest_err = Python Get( rest_err );
 		If( Starts With( Char( rest_err ), "AUTH:" ),
-			// 401 -> ask for credentials and retry the same call
+			// 401 -> ask for credentials and retry the same call. With
+			// "remember" checked, the Python layer stores them in the OS
+			// credential vault (never on disk in clear text).
 			rest_host = Substr( rest_err, 6 );
-			{rest_user, rest_pwd} = f_REST_Login( rest_host );
+			{rest_user, rest_pwd, rest_remember} = f_REST_Login( rest_host );
 			If( rest_user == "",
 				rest_done = 1
 			,
 				Python Send( rest_host );
 				Python Send( rest_user );
 				Python Send( rest_pwd );
+				Python Send( rest_remember );
 				Python Submit( "\[
 import mes_connector as mc
-mc.set_credentials(rest_host, rest_user, rest_pwd)
+mc.set_credentials(rest_host, rest_user, rest_pwd, bool(rest_remember))
+rest_user = rest_pwd = None  # do not keep the secret in the python globals
 ]\" );
+				rest_pwd = "";  // nor in the JSL namespace
 			);
 		,
 			rest_done = 1
