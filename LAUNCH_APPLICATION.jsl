@@ -870,7 +870,10 @@ WinTag = New Window( "IP21PI Data Retrieval",
 																PeriodPanel << Visibility( "Visible" );,
 															"Actual",
 																rdbox_Method << Set( 3 );
-																PeriodPanel << Visibility( "Collapse" );
+																PeriodPanel << Visibility( "Collapse" );,
+															"Step Interpolated",
+																rdbox_Method << Set( 4 );
+																PeriodPanel << Visibility( "Visible" );
 														);
 														PeriodValue << Set( int.period_value );
 														Match( str.period_unit,
@@ -976,17 +979,17 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										Lineup Box( N Col( 1 ), Spacing( 10 ),
 											Panel Box( "Method",
 												rdbox_Method = Radio Box(
-													{"Interpolated", "Average", "Actual"}, 
+													{"Interpolated", "Average", "Actual", "Step Interpolated"},
 
 													method_selected = rdbox_Method << Get();
-													
+
 													/* If "Actual" method is selected (id 3), then there is no need to select a period value, so we hide period panel */
 													If( method_selected == 3,
 														PeriodPanel << Visibility( "Collapse" ),
 														PeriodPanel << Visibility( "Visible" )
 													);
 												)
-											), 
+											),
 									
 											PeriodPanel = Panel Box( "Period",
 												PeriodValue = Number Edit Box( 10 ),

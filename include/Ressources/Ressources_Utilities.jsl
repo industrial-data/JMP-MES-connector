@@ -1301,14 +1301,15 @@ f_SetUp4Extraction = Function( {ServerType},
 				Request = "4";
 				TableIP21 = "HISTORY(80)";
 				ValueIP21 = "VALUE";
-			
-			, 
-		//Interpolated
-				If( ExtractionMethod == "Interpolated",
+
+			,
+		//Interpolated + Step Interpolated (same request; the stepped behavior
+		//is selected via the HISTORY table's STEPPED field, see f_SQL_EXTRACT_TAGS)
+				If( ExtractionMethod == "Interpolated" | ExtractionMethod == "Step Interpolated",
 					Request = "6";
 					TableIP21 = "HISTORY(80)";
 					ValueIP21 = "VALUE";
-				, 
+				,
 		// Average
 					Request = "1";
 					TableIP21 = "AGGREGATES";

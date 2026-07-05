@@ -121,26 +121,11 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	
 	StartFormat = dt << Get Table Variable( "Start Time" );
 	EndFormat = dt << Get Table Variable( "End Time" );
-	If( Or( StartFormat == "", EndFormat == "" ),
-		f_DialogError( "Missing table variable(s): Start/End Time" )
-	);
-	
-	Start = Informat( StartFormat );
-	End = Informat( EndFormat );
-	Start_UTC = Start - local_to_UTC_time_diff_in_s;
-	End_UTC = End - local_to_UTC_time_diff_in_s;
-	
-	If( ServerType == "IP21",
-		{StartFormat, EndFormat} = f_FormatDates( Start_UTC, End_UTC, 1 ),
-		{StartFormat, EndFormat} = f_FormatDates( Start, End, 0 )
-	);
-	
-	f_Log( "INFO", "Start Date - " || Char( StartFormat ) || " / End Date - " || Char( EndFormat ) );
-	
-	n_estimated_rows = (End - Start) / NewPeriodNumValue_s;
-	
-	
-	
+
+	// v3.0: tolerate missing/unparseable table variables — the data itself is
+	// the source of truth (fallbacks derived from TS_UTC in 1.5b below)
+	Start = Try( Informat( StartFormat ), . );
+	End = Try( Informat( EndFormat ), . );
 
 /* 1.5. Tags */
 
@@ -177,6 +162,44 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 			ColTS["TS_UTC"] = colName
 		);
 	);
+
+/* 1.5b. Actual data window (v3.0)
+   The oldest/newest UTC timestamps present in the table. Used to prefill the
+   Update window (Start = oldest UTC timestamp, End = now) and as fallback
+   when the Start/End Time table variables are missing or unparseable. */
+
+	data_oldest_utc = .;
+	data_newest_utc = .;
+	Try(
+		ts_utc_vals = Column( dt, ColTS["TS_UTC"] ) << Get As Matrix;
+		If( N Rows( ts_utc_vals ) > 0,
+			data_oldest_utc = Min( ts_utc_vals );
+			data_newest_utc = Max( ts_utc_vals );
+		);
+	);
+
+	// Fallbacks: table variables hold LOCAL wall time; convert from UTC data
+	If( Is Missing( Start ) & !Is Missing( data_oldest_utc ),
+		Start = data_oldest_utc - local_to_UTC_time_diff_in_s
+	);
+	If( Is Missing( End ) & !Is Missing( data_newest_utc ),
+		End = data_newest_utc - local_to_UTC_time_diff_in_s
+	);
+	If( Is Missing( Start ) | Is Missing( End ),
+		f_DialogError( "Cannot determine the table's time window (no Start/End Time variables and no readable TS_UTC column)." )
+	);
+
+	Start_UTC = Start - local_to_UTC_time_diff_in_s;
+	End_UTC = End - local_to_UTC_time_diff_in_s;
+
+	If( ServerType == "IP21",
+		{StartFormat, EndFormat} = f_FormatDates( Start_UTC, End_UTC, 1 ),
+		{StartFormat, EndFormat} = f_FormatDates( Start, End, 0 )
+	);
+
+	f_Log( "INFO", "Start Date - " || Char( StartFormat ) || " / End Date - " || Char( EndFormat ) );
+
+	n_estimated_rows = (End - Start) / NewPeriodNumValue_s;
 
 /* 1.6. Filters */
 
@@ -363,8 +386,14 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	bttn_Round << Underline Style( 1 );
 	bttn_Now << Underline Style( 1 );
 	bttn_Extraction << Set Icon( "DebuggerRunWithoutBreakpoints" );
-	StartTime << set( End + NewPeriodNumValue_s );
-	EndTime << set( Floor( Today() / NewPeriodNumValue_s ) * NewPeriodNumValue_s ); 
+	// v3.0: prefill Start with the OLDEST UTC timestamp present in the table
+	// and End with 'now' (rounded to the period). The old prefill relied on
+	// the Start/End Time table variables, which produced invalid dates.
+	If( !Is Missing( data_oldest_utc ),
+		StartTime << set( data_oldest_utc ),
+		StartTime << set( Start )
+	);
+	EndTime << set( Floor( Today() / NewPeriodNumValue_s ) * NewPeriodNumValue_s );
 	// Set date format
 	StartTime << Set Format( Format( "yyyy-mm-ddThh:mm:ss" ) );
 	EndTime << Set Format( Format( "yyyy-mm-ddThh:mm:ss" ) );
@@ -517,6 +546,23 @@ EXPR_UPDATE_REFRESH_EXTRACT = Expr(
 
 
 	f_Log( "INFO", "Concatenate old data with new data." );
+
+	// v3.0: drop the old rows that fall inside the re-extracted window so an
+	// overlapping Update (e.g. Start = oldest timestamp) replaces the rows
+	// instead of duplicating timestamps.
+	Try(
+		new_ts = Column( tblUpdatedTags, "TS_UTC" ) << Get As Matrix;
+		If( N Rows( new_ts ) > 0,
+			old_ts = Column( dt, ColTS["TS_UTC"] ) << Get As Matrix;
+			overlap_rows = Loc( (old_ts >= Min( new_ts )) & (old_ts <= Max( new_ts )) );
+			If( N Rows( overlap_rows ) > 0,
+				f_Log( "INFO", "Replacing " || Char( N Rows( overlap_rows ) ) || " overlapping row(s) with the fresh extraction." );
+				dt << Select Rows( overlap_rows );
+				dt << Delete Rows;
+				dt << Clear Select;
+			);
+		);
+	);
 
 	dt << Concatenate( tblUpdatedTags, "Append to first table" );
 	// Order by TS column

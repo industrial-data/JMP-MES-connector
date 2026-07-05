@@ -71,13 +71,16 @@ def _dataserver_webid(base: str, da_server: str) -> str:
 
 
 def search_tags(base_url: str, da_server: str, name_filter: str = "",
-                description_filter: str = "", max_results: int = 10000) -> pd.DataFrame:
+                description_filter: str = "", max_results: int | None = None) -> pd.DataFrame:
     """Search tags. Returns columns: tagnames, descriptions, units, type.
 
     (Same column contract as the legacy SQL search — the JSL GUI depends on it.)
     The GUI passes plain substrings; PI's nameFilter uses * wildcards, so we
     wrap: 'FIC' -> '*FIC*'. Description filtering is done locally because the
     /points endpoint only filters on name.
+
+    UNCAPPED by default: pages through the full point database (1000 per
+    request) until the server has no more matches. Pass max_results to limit.
     """
     base = base_url.rstrip("/")
     webid = _dataserver_webid(base, da_server)
@@ -88,10 +91,11 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
         nf = f"*{nf}*"
 
     rows, start_index, page = [], 0, 1000
-    while len(rows) < max_results:
+    while max_results is None or len(rows) < max_results:
+        count = page if max_results is None else min(page, max_results - len(rows))
         params = {
             "startIndex": start_index,
-            "maxCount": min(page, max_results - len(rows)),
+            "maxCount": count,
             "selectedFields": "Items.Name;Items.Descriptor;Items.EngineeringUnits;Items.PointType;Items.Path",
         }
         if nf:
@@ -104,7 +108,7 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
             break
         rows.extend(items)
         start_index += len(items)
-        if len(items) < params["maxCount"]:
+        if len(items) < count:
             break
         time.sleep(PAGING_DELAY_S)
 
@@ -152,11 +156,21 @@ def _point_info(base: str, da_webid: str, tag: str) -> dict:
 
 def _stream_url_and_params(base: str, webid: str, method: str, start: str, end: str,
                            interval_s: int, filter_expression: str) -> tuple[str, dict]:
-    """Map the add-in's extraction method to the right streams endpoint."""
+    """Map the add-in's extraction method to the right streams endpoint.
+
+    "Step Interpolated" fetches recorded values (boundaryType=Outside so the
+    value in force at the window start is included) and the caller
+    forward-fills them onto the aligned grid — true staircase interpolation.
+    PI Web API's own /interpolated has no stepped override (it follows the
+    point's Step attribute), so this is done client-side for all tags alike.
+    """
     params: dict = {"startTime": start, "endTime": end}
     if method == "Actual":
         url = f"{base}/streams/{webid}/recorded"
         params["boundaryType"] = "Inside"
+    elif method == "Step Interpolated":
+        url = f"{base}/streams/{webid}/recorded"
+        params["boundaryType"] = "Outside"
     elif method == "Average":
         url = f"{base}/streams/{webid}/summary"
         params.update({
@@ -239,25 +253,42 @@ def _fetch_one(base: str, da_webid: str, tag: str, label: str, method: str,
     return df[[label]]
 
 
+def _step_grid(start: str, end: str, interval_s: int) -> pd.DatetimeIndex:
+    """Aligned UTC grid for Step Interpolated. start/end are local wall-time
+    strings (same convention as TS), converted through the client zone."""
+    from datetime import datetime
+    tz = datetime.now().astimezone().tzinfo
+    lo = pd.Timestamp(start).tz_localize(tz).tz_convert("UTC")
+    hi = pd.Timestamp(end).tz_localize(tz).tz_convert("UTC")
+    return pd.date_range(lo, hi, freq=f"{int(interval_s)}s", tz="UTC", name="UTC_Index")
+
+
 def extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
             method: str, start: str, end: str, interval_s: int,
             filter_expression: str = "") -> pd.DataFrame:
     """Extract many tags into one wide table: TS, TS_UTC, <one column per label>.
 
-    - TS is PI-server-local time, TS_UTC is UTC (both 'yyyy-MM-dd HH:mm:ss'
-      strings — the JSL post-formatting expects these exact two columns).
+    - TS/TS_UTC are tz-naive datetime columns (JMP converts them natively).
     - A failing tag is retried MAX_ATTEMPTS times, then left as an all-empty
       column so the output always contains every requested tag.
+    - "Step Interpolated": recorded values are forward-filled onto one shared
+      aligned grid (previous value held until the next change).
     """
     base = base_url.rstrip("/")
     da_webid = _dataserver_webid(base, da_server)
+    step_grid = _step_grid(start, end, interval_s) if method == "Step Interpolated" else None
 
     def _job(i: int) -> tuple[int, pd.DataFrame]:
         last_err = None
         for attempt in range(MAX_ATTEMPTS):
             try:
-                return i, _fetch_one(base, da_webid, tags[i], labels[i], method,
-                                     start, end, interval_s, filter_expression)
+                one = _fetch_one(base, da_webid, tags[i], labels[i], method,
+                                 start, end, interval_s, filter_expression)
+                if step_grid is not None:
+                    # staircase: place recorded values on the shared grid,
+                    # holding the previous value until the next change
+                    one = one.reindex(step_grid.union(one.index)).ffill().reindex(step_grid)
+                return i, one
             except Exception as ex:  # noqa: BLE001 - retried, then surfaced as empty col
                 from .auth import AuthRequired
                 if isinstance(ex, AuthRequired):
