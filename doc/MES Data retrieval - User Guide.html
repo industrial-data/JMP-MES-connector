@@ -25,7 +25,30 @@
 <body>
 
 <h1>MES Data Retrieval JMP Add-in — User Guide</h1>
-<p><strong>Version 3.0</strong> — REST edition (PI Web API / Aspen Process Data REST)</p>
+<p><strong>Version 4.0</strong> — Asset Framework edition (PI Web API / PI AF / Aspen Process Data REST)</p>
+
+<div class="note">
+<strong>What changed in v4.0 — Asset Framework edition:</strong>
+<ul>
+  <li><strong>AF attribute search</strong>: on PI servers with an AF server configured,
+      the search bar finds Asset Framework <em>attributes</em> by name/description. The
+      matches are shown as a <strong>collapsible element hierarchy</strong> (parent/child
+      tree) above the flat results list, labeled
+      <code>attribute (description) [units] {AF path}</code>. Tick
+      <em>“Also show tags not in AF”</em> under the results to include plain DA points.</li>
+  <li><strong>Stack by asset</strong> (Options): when your selection covers the same
+      attributes across sibling assets (e.g. Temperature of reactors A/B/C), the
+      extraction produces <em>one column per attribute name</em> plus an
+      <code>Asset</code> column — timestamps repeated per asset, like JMP's
+      Tables&nbsp;&gt;&nbsp;Concatenate. An asset missing an attribute gets missing
+      values. Switch the analyzed asset with a row/data filter on <code>Asset</code>
+      instead of rebuilding the analysis.</li>
+  <li><strong>Event frames</strong> (Filters tab): search the server's PI Event Frames by
+      name and/or template and restrict the extraction to the selected frames' windows;
+      rows carry an <code>EventFrame</code> label column.</li>
+</ul>
+Note: Update/Refresh and Add tags are not yet available for asset-stacked tables.
+</div>
 
 <div class="note">
 <strong>What changed in v3.0:</strong> the add-in now talks to the historians over their

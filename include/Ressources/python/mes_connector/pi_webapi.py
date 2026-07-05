@@ -137,9 +137,25 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
-def _point_info(base: str, da_webid: str, tag: str) -> dict:
-    """WebId + PointType for one tag (exact name lookup)."""
+def _point_info(base: str, da_webid: str | None, tag: str) -> dict:
+    """WebId + value type for one tag or AF attribute.
+
+    v4.0: a tag starting with '\\\\' is an AF attribute PATH
+    (\\\\AFSRV\\DB\\Element|Attribute) and is resolved through /attributes —
+    attribute WebIds are streamable by the same /streams endpoints.
+    """
     s = get_session(base)
+    if tag.startswith("\\\\"):
+        r = s.get(f"{base}/attributes",
+                  params={"path": tag, "selectedFields": "WebId;Name;Type"},
+                  timeout=60)
+        _log_url(r)
+        check_response(r)
+        body = r.json()
+        if "WebId" not in body:
+            raise RuntimeError(f"AF attribute '{tag}' not found on PI server")
+        return {"WebId": body["WebId"], "Name": body.get("Name", tag),
+                "PointType": body.get("Type", "")}
     r = s.get(
         f"{base}/dataservers/{da_webid}/points",
         params={"nameFilter": tag, "maxCount": 1,
@@ -275,7 +291,10 @@ def extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
       aligned grid (previous value held until the next change).
     """
     base = base_url.rstrip("/")
-    da_webid = _dataserver_webid(base, da_server)
+    # the DA server is only needed for plain point names; AF attribute paths
+    # (leading '\\\\') resolve through /attributes without it
+    da_webid = (_dataserver_webid(base, da_server)
+                if any(not t.startswith("\\\\") for t in tags) else None)
     step_grid = _step_grid(start, end, interval_s) if method == "Step Interpolated" else None
 
     def _job(i: int) -> tuple[int, pd.DataFrame]:

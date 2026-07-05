@@ -10,6 +10,25 @@ This add-in automates data extraction from Aspentech IP.21 and OSIsoft PI (Aveva
 
 Have a look at this [review](https://pubs.rsc.org/en/content/articlelanding/2022/re/d1re00541c) for more industrial data science applications. If you would like JMP to support historians natively, give it a thumbs up in the [wishlist](https://community.jmp.com/t5/JMP-Wish-List/Native-Support-to-Manufacturing-Historians-Aspentech-IP-21-and/idi-p/540846). Similar work: [JMP OsiPITools](https://github.com/himanga/JMPOSIPITools), [Tagreader Python library](https://github.com/equinor/tagreader-python).
 
+## What's new in v4.0 — Asset Framework edition
+
+v4.0 makes the add-in **asset-centric** (inspired by Seeq's asset workflows):
+
+- **AF attribute search**: with a `PI_AF_Server` configured, the search bar finds every
+  Asset Framework **attribute** matching the name/description — results are shown both as
+  a **collapsible element hierarchy** (parent/child tree) and in the flat selection list,
+  labeled `attribute (description) [units] {AF path}`. Tags not in AF (plain DA points)
+  can be listed too via an option under the results.
+- **Stack by asset**: when the selection spans sibling assets (e.g. the `Temperature` of
+  reactors A, B and C), a new option extracts *per asset, concatenated* — **one column per
+  attribute name plus an `Asset` column**, timestamps repeated per asset (JMP
+  Tables > Concatenate semantics). An asset missing an attribute simply gets missing
+  values. Switch the analyzed asset with a local data filter on `Asset` instead of
+  rebuilding your analysis.
+- **Event frames**: the Filters tab can search the server's PI Event Frames (by name
+  and/or template) and restrict the extraction to the selected frames' time windows;
+  extracted rows carry an `EventFrame` label column.
+
 ## What's new in v3.0 — REST edition
 
 Version 3.0 is a major rework: **all extraction now goes through the historians' REST web
@@ -148,9 +167,8 @@ This add-in is open-source (BSD clause 3).
 
 ## Roadmap
 
-- PI AF **attribute search** (browse the element hierarchy, labels
-  `tag (description) [units] {path}`) — the plumbing (`PI_AF_Server` column, `path` in
-  search results) is already in place.
-- More extraction options (summary types, event frames).
+- Update/Refresh and Add-tags support for asset-stacked tables.
+- Tree-side selection (click attributes directly in the hierarchy).
+- More extraction options (additional summary types, event-frame attributes).
 
 Suggestions, issues, and pull requests are more than welcome.

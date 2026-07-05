@@ -37,7 +37,8 @@
 REST_PY_INITIALIZED = 0;
 If( Is Empty( WebAPIURL ), WebAPIURL = "" );
 If( Is Empty( DAServer ), DAServer = "" );        // = the mandatory "server" field (PI DA / IP21 data source)
-If( Is Empty( PIAFServer ), PIAFServer = "" );    // optional, PI only — reserved for the future AF attribute search
+If( Is Empty( PIAFServer ), PIAFServer = "" );    // optional, PI only — enables the v4.0 AF attribute search
+If( Is Empty( EFWindows_JSON ), EFWindows_JSON = "" );  // selected event-frame windows (set per extraction)
 REST_ChunkSize = 5;                                // tags per Python call; matches the PI worker pool, drives the progress bar
 
 /* REST is the only transport: a server without a WebAPI URL cannot be queried */
@@ -313,17 +314,28 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		rest_sql = Substitute( __SQL_FINDTAGS_IP21, "VAR_TAGNAME", TagName, "VAR_DESCRIPTION", TagDescription );
 		f_Log( "INFO", "<SQL via REST>  \!n\!n" || rest_sql || "\!n\!n", "REST" );
 		Python Send( rest_sql );
-		dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)" );
+		dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)\!nrest_df['path'] = ''" );
 	,
-		// PI: native PI Web API point search (af_server reserved for the
-		// future AF attribute search with collapsible element hierarchy)
+		// PI (v4.0): when an AF server is configured, the search runs against
+		// the ASSET FRAMEWORK — it returns every attribute whose name or
+		// description matches, identified by its full AF path. DA points not
+		// in AF are appended when the user ticks the option under the results.
 		rest_name = Char( TagName );
 		rest_desc = Char( TagDescription );
 		rest_af = Char( PIAFServer );
+		rest_include_da = If( Try( AF_IncludeDATags << Get( 1 ), 1 ) == 1, 1, 0 );
+		If( Trim( rest_af ) == "", rest_include_da = 1 );  // no AF server -> DA search only
 		Python Send( rest_name );
 		Python Send( rest_desc );
 		Python Send( rest_af );
-		dt_rest = f_REST_PyCall( "rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc, rest_af)" );
+		Python Send( rest_include_da );
+		dt_rest = f_REST_PyCall( "\[import pandas as _pd
+_parts = []
+if rest_af.strip():
+    _parts.append(mc.search_af_attributes(rest_base, rest_af, rest_name, rest_desc))
+if int(rest_include_da):
+    _parts.append(mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc))
+rest_df = _pd.concat(_parts, ignore_index=True) if _parts else _pd.DataFrame(columns=['tagnames', 'descriptions', 'units', 'type', 'path'])]\" );
 	);
 
 	dt_rest << Set Name( "f_REST_FINDTAGS Results" );
@@ -347,7 +359,7 @@ f_IP21_REST_SQL = Function( {SQL_query},
 );
 
 
-/* Tag type for one PI tag via the Web API (exact-name point search). */
+/* Tag type for one PI tag (point name) or AF attribute (full path, v4.0). */
 f_REST_PI_TagType = Function( {Tag},
 	rest_base = Char( WebAPIURL );
 	rest_da = Char( DAServer );
@@ -355,16 +367,208 @@ f_REST_PI_TagType = Function( {Tag},
 	Python Send( rest_base );
 	Python Send( rest_da );
 	Python Send( rest_name );
-	dt_rest = f_REST_PyCall(
-		"rest_df = mc.search_tags('PI', rest_base, rest_da, rest_name, '')\!nrest_df = rest_df[rest_df['tagnames'] == rest_name].head(1)"
-	);
-	If( N Rows( dt_rest ) == 0,
-		Close( dt_rest, nosave );
-		f_DialogError( "No tagtype found" );
-	);
-	TagTypeRslt = Column( dt_rest, "type" )[1];
+	f_REST_PyExec( "rest_df = __import__('pandas').DataFrame({'type': [mc.pi_tag_or_attribute_type(rest_base, rest_da, rest_name)]})" );
+	dt_rest = Python Get( rest_df );
+	TagTypeRslt = Try( Column( dt_rest, "type" )[1], "" );
 	Close( dt_rest, nosave );
+	If( Char( TagTypeRslt ) == "",
+		f_DialogError( "No tagtype found" )
+	);
 	Return( TagTypeRslt );
+);
+
+
+/****************************************************
+*  III-b. v4.0 — PI ASSET FRAMEWORK (AF)
+******************************************************/
+
+/*
+    f_REST_FindEventFrames Function
+
+    Event frames overlapping the given window, across all databases of the
+    configured AF server. Used by the "Event frames" panel in the Filters tab
+    (Seeq-style conditions): the user can restrict the extraction to the time
+    windows of the selected frames.
+
+    @return JMP table with columns Name / Template / Start / End / Path.
+*/
+f_REST_FindEventFrames = Function( {NameFilter, TemplateFilter, StartISO, EndISO},
+	f_REST_CheckConfigured();
+	If( Trim( Char( PIAFServer ) ) == "",
+		f_DialogError( "No PI AF server configured for this server (needed for event frames)." )
+	);
+	rest_base = Char( WebAPIURL );
+	rest_af = Char( PIAFServer );
+	rest_name = Char( NameFilter );
+	rest_template = Char( TemplateFilter );
+	rest_start = Char( StartISO );
+	rest_end = Char( EndISO );
+	Python Send( rest_base );
+	Python Send( rest_af );
+	Python Send( rest_name );
+	Python Send( rest_template );
+	Python Send( rest_start );
+	Python Send( rest_end );
+	dt_rest = f_REST_PyCall(
+		"rest_df = mc.search_event_frames(rest_base, rest_af, rest_name, rest_template, rest_start, rest_end)"
+	);
+	dt_rest << Set Name( "Event frames" );
+	dt_rest << Show Window( 0 );
+	Return( dt_rest );
+);
+
+
+/* Serialize the event frames selected in the GUI to the python contract:
+   {"frames":[{"name":..., "start":..., "end":...}, ...]}
+   (EF_Names / EF_Starts / EF_Ends are globals filled by the EF search panel;
+   lstIdx are the selected indices.) */
+f_EventFrames_ToJSON = Function( {lstIdx},
+	If( N Items( lstIdx ) == 0, Return( "" ) );
+	lst_json = List();
+	For( i = 1, i <= N Items( lstIdx ), i++,
+		k = lstIdx[i];
+		Insert Into( lst_json,
+			"{\!"name\!":\!"" || f_JSON_Escape( EF_Names[k] ) || "\!",\!"start\!":\!"" || f_JSON_Escape( EF_Starts[k] )
+			 || "\!",\!"end\!":\!"" || f_JSON_Escape( EF_Ends[k] ) || "\!"}"
+		);
+	);
+	Return( "{\!"frames\!":[" || Concat Items( lst_json, "," ) || "]}" );
+);
+
+
+/*
+    f_AF_FillTree Function
+
+    Renders the AF search results as a collapsible parent/child element tree
+    (Tree Box) above the flat results list. Browsing aid: the actual selection
+    still happens in the results list (labels are identical). Rebuilds the
+    tree on every search. Silently does nothing when the main GUI's tree
+    container is absent (e.g. the Add-tags window reuses the same search).
+
+    @param dt: the search results table (tagnames = attribute path when AF).
+*/
+f_AF_FillTree = Function( {dt},
+
+	// Only rows that are AF attributes (their identity contains '|')
+	lstIds = Column( dt, "tagnames" ) << Get Values;
+	lstLbls = Column( dt, "tag_desc_units" ) << Get Values;
+
+	aa_nodes = Associative Array();   // cumulative element path -> Tree Node
+	lstRoots = List();
+	n_af = 0;
+
+	For( i = 1, i <= N Items( lstIds ), i++,
+		If( Contains( lstIds[i], "|" ),
+			n_af++;
+			elem_path = Word( 1, lstIds[i], "|" );
+			segments = Words( elem_path, "\!\" );   // server, database, element...
+			cumul = "";
+			parent_node = Empty();
+			For( k = 1, k <= N Items( segments ), k++,
+				cumul = cumul || "\!\" || segments[k];
+				If( !(aa_nodes << Contains( cumul )),
+					new_node = Tree Node( segments[k] );
+					aa_nodes[cumul] = new_node;
+					If( Is Empty( parent_node ),
+						Insert Into( lstRoots, new_node ),
+						parent_node << Append( new_node )
+					);
+				);
+				parent_node = aa_nodes[cumul];
+			);
+			// attribute leaf: same label as in the results list
+			parent_node << Append( Tree Node( lstLbls[i] ) );
+		)
+	);
+
+	// Rebuild the tree box inside its holder (main GUI only)
+	Try(
+		Try( tree_af << Delete Box );
+		If( n_af > 0,
+			afTreeHolder << Append( tree_af = Tree Box( lstRoots, Size( 550 * RatioX, 170 * RatioY ) ) );
+			// expand the element levels so attributes are visible
+			aa_keys = aa_nodes << Get Keys;
+			For( k = 1, k <= N Items( aa_keys ), k++,
+				Try( tree_af << Expand( aa_nodes[aa_keys[k]] ) )
+			);
+			afTreeOutline << Set Title( "Asset hierarchy (" || Char( n_af ) || " attributes)" );
+			afTreeOutline << Close( 0 );
+		,
+			afTreeOutline << Set Title( "Asset hierarchy (no AF results)" );
+			afTreeOutline << Close( 1 );
+		);
+	);
+);
+
+
+/*
+    f_RunExtraction_PI_AF_Stacked Function
+
+    v4.0 asset-stacked extraction: TS, TS_UTC, [EventFrame], Asset, plus ONE
+    column per attribute NAME. Rows are concatenated per asset (JMP
+    Tables > Concatenate semantics): with reactors A/B/C the timestamps appear
+    three times, once per reactor, and "Temperature" is a single column. An
+    asset missing an attribute gets missing values. This lets users switch the
+    analyzed asset with a row filter instead of re-building the analysis
+    (Seeq-style asset swapping).
+
+    @param lstPaths: full AF attribute paths (\\AF\DB\Element|Attribute).
+*/
+f_RunExtraction_PI_AF_Stacked = Function( {lstPaths, StartFormat, EndFormat, Filters_AA},
+
+	section = "DATA EXTRACTION (PI AF, STACKED)";
+	f_Log( "INFO", "START asset-stacked extraction - " || Char( N Items( lstPaths ) ) || " attributes.", section );
+
+	// Output columns are the bare attribute names; register them so the
+	// post-extraction formatting (properties, numeric conversion) works.
+	TagExtract_AA = Associative Array();
+	TagType_AA = Associative Array();   // left sparse: columns arrive typed from pandas
+	For( i = 1, i <= N Items( lstPaths ), i++,
+		attr_name = Word( -1, lstPaths[i], "|" );
+		TagExtract_AA[attr_name] = attr_name;
+	);
+
+	rest_base = Char( WebAPIURL );
+	rest_paths = lstPaths;
+	rest_method = Char( ExtractionMethod );
+	rest_start = Char( StartFormat );
+	rest_end = Char( EndFormat );
+	rest_interval = NewPeriodNumValue_s;
+	rest_filters = f_Filters_ToJSON( Filters_AA, Condition );
+	rest_ef = Char( EFWindows_JSON );
+
+	f_Log( "INFO",
+		"PI AF stacked - base URL " || rest_base || " / method " || rest_method
+		 || " / window " || rest_start || " -> " || rest_end || " / interval " || Char( rest_interval ) || "s"
+		 || If( rest_ef != "", " / restricted to selected event frames", "" ), section );
+
+	Python Send( rest_base );
+	Python Send( rest_paths );
+	Python Send( rest_method );
+	Python Send( rest_start );
+	Python Send( rest_end );
+	Python Send( rest_interval );
+	Python Send( rest_filters );
+	Python Send( rest_ef );
+
+	progress:init( 1, WindowSize );
+	progress:set( 1, "Extracting per asset via PI Web API (see log for URLs)..." );
+	Try(
+		bttn_Extraction << Set Button Name( "Extracting per asset..." );
+		bttn_Extraction2 << Set Button Name( "Extracting per asset..." );
+	);
+	Try(
+		tblAllTags = f_REST_PyCall(
+			"rest_df = mc.pi_extract_assets(rest_base, list(rest_paths), rest_method, rest_start, rest_end, int(rest_interval), rest_filters, rest_ef)"
+		)
+	,
+		progress:term();
+		Throw( "REST: PI AF stacked extraction failed (see log)" );
+	);
+	progress:term();
+
+	f_Log( "INFO", "END asset-stacked extraction - " || Char( N Rows( tblAllTags ) ) || " rows.", section );
+	Return( tblAllTags );
 );
 
 
@@ -499,10 +703,12 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 	rest_end = Char( EndFormat );
 	rest_interval = NewPeriodNumValue_s;
 	rest_filters = f_Filters_ToJSON( Filters_AA, Condition );
+	rest_ef = Char( EFWindows_JSON );
 
 	f_Log( "INFO",
 		"PI Web API - base URL " || rest_base || " / DA server " || rest_da || " / method " || rest_method
 		 || " / window " || rest_start || " -> " || rest_end || " / interval " || Char( rest_interval ) || "s"
+		 || If( rest_ef != "", " / restricted to selected event frames", "" )
 		 || " (request URLs are echoed below by the Python layer)", section );
 
 	Python Send( rest_base );
@@ -512,12 +718,13 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 	Python Send( rest_end );
 	Python Send( rest_interval );
 	Python Send( rest_filters );
+	Python Send( rest_ef );
 
 	// Open an extraction session on the Python side (computes the shared
 	// filterExpression once), then feed it chunks of tags so the existing
 	// progress bar can advance between Python calls.
 	f_REST_PyExec(
-		"mc.pi_extract_begin(rest_base, rest_da, rest_method, rest_start, rest_end, int(rest_interval), rest_filters)\!nrest_df = __import__('pandas').DataFrame()"
+		"mc.pi_extract_begin(rest_base, rest_da, rest_method, rest_start, rest_end, int(rest_interval), rest_filters, rest_ef)\!nrest_df = __import__('pandas').DataFrame()"
 	);
 
 	NTags = N Items( lstTags );

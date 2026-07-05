@@ -127,6 +127,13 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 
 
 	colNames = dt << Get Column Names( "String" );
+/* v4.0: asset-stacked tables (Asset column) are not yet supported by this
+   script — the tag columns are shared across assets, so per-tag re-extraction
+   is ambiguous. Re-extract from the main window instead. */
+	If( Contains( colNames, "Asset" ),
+		f_DialogError( "This table is stacked by asset (v4.0). Update/Refresh and Add tags are not supported for stacked tables yet - please re-extract from the main window." )
+	);
+
 		
 	// Update TagSelect_AA
 	TagSelect_AA = Associative Array();

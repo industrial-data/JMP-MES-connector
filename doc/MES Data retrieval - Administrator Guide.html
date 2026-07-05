@@ -24,7 +24,21 @@
 <body>
 
 <h1>MES Data Retrieval JMP Add-in — Administrator Guide</h1>
-<p><strong>Version 3.0</strong> — REST edition (PI Web API / Aspen Process Data REST)</p>
+<p><strong>Version 4.0</strong> — Asset Framework edition (PI Web API / PI AF / Aspen Process Data REST)</p>
+
+<div class="note">
+<strong>v4.0 additions:</strong> PI Asset Framework support. With a <code>PI_AF_Server</code>
+configured in the server list, searches run against
+<code>/assetdatabases/{id}/elementattributes</code> (full-hierarchy attribute search, shown
+as a collapsible element tree in the GUI), extraction can be <em>stacked per asset</em>
+(<code>pi_extract_assets</code>: TS / TS_UTC / Asset / one column per attribute name,
+missing attributes → missing values), and PI Event Frames can be searched
+(<code>/assetdatabases/{id}/eventframes</code>, by name/template) to restrict extraction
+windows. See <code>mes_connector/pi_af.py</code> for the endpoint documentation. Attribute
+identity is the full AF path; attribute WebIds are streamed by the same
+<code>/streams</code> endpoints as DA points. Update/Refresh and Add-tags are guarded off
+for stacked tables in this version.
+</div>
 
 <p>This document describes the administrative tasks required to manage the add-in and its
 code architecture. It is intended for the system administrator in charge of the add-in.

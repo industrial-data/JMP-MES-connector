@@ -1382,9 +1382,25 @@ f_RunExtraction = Function(
 	   function is the IP21 per-tag SQL loop. */
 
 	If( ServerType == "PI",
-		tblAllTags = Try(
-			f_RunExtraction_PI_REST( lstTags, StartFormat, EndFormat, Filters_AA ),
-			f_DialogError( "PI Web API extraction failed. Check the log (CTRL+Shift+L) for the request URLs." )
+		// v4.0: asset-stacked extraction when the user checked "Stack by
+		// asset" and the selection contains AF attributes (identity has '|')
+		n_af_paths = 0;
+		For( i_chk = 1, i_chk <= N Items( lstTags ), i_chk++,
+			If( Contains( Char( lstTags[i_chk] ), "|" ), n_af_paths++ )
+		);
+		If( And( Try( int.StackAssets, 0 ) == 1, n_af_paths > 0 ),
+			If( n_af_paths < N Items( lstTags ),
+				f_DialogError( "Stack by asset requires ALL selected items to be AF attributes (remove the plain DA tags or uncheck the option)." )
+			);
+			tblAllTags = Try(
+				f_RunExtraction_PI_AF_Stacked( lstTags, StartFormat, EndFormat, Filters_AA ),
+				f_DialogError( "PI AF stacked extraction failed. Check the log (CTRL+Shift+L) for the request URLs." )
+			);
+		,
+			tblAllTags = Try(
+				f_RunExtraction_PI_REST( lstTags, StartFormat, EndFormat, Filters_AA ),
+				f_DialogError( "PI Web API extraction failed. Check the log (CTRL+Shift+L) for the request URLs." )
+			);
 		);
 		If( N Rows( tblAllTags ) == 0,
 			Close( tblAllTags, nosave );
@@ -3286,13 +3302,23 @@ f_button.find_tags = Function( {},
 	
 	// Order elements alphabetically by tagnames
 	dt_TagTable << Sort( By( :tagnames ), Replace Table, Order( Ascending ), Copy formula( 0 ) );
-	
-	// Create new column containing tagname (descr) [units]
+
+	// Create new column containing tagname (descr) [units] {...}
+	// v4.0: AF attributes (identity contains '|') display their SHORT name and
+	// carry the full AF path in {...}; plain tags keep {type} as before.
 	dt_TagTable << New Column( "tag_desc_units",
 		"Character",
-		Formula( :tagnames || " (" || :descriptions || ") [" || :units || "] {" || :type || "}" )
+		Formula(
+			If( Contains( :tagnames, "|" ),
+				Word( -1, :tagnames, "|" ) || " (" || :descriptions || ") [" || :units || "] {" || :tagnames || "}",
+				:tagnames || " (" || :descriptions || ") [" || :units || "] {" || :type || "}"
+			)
+		)
 	);
-	
+
+	// v4.0: render the AF results as a collapsible element hierarchy
+	Try( f_AF_FillTree( dt_TagTable ) );
+
 
 /* 2.2. Update list of available tags */
 

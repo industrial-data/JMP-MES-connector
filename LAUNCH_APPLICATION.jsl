@@ -484,6 +484,10 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												Lineup Box( N Col( 2 ), spacing( 15 ),
 													Text Box( "Compute summary table:" ),
 													OptSummary = Check Box( {""} ),
+													// v4.0: one row per timestamp x asset, one column per
+													// attribute NAME + an Asset column (AF selections only)
+													Text Box( "Stack by asset:" ),
+													OptStackAssets = Check Box( {""} ),
 													Text Box( "Workflow:" ),
 													bttnWorkflow = Button Box( "Select file", 
 												 	
@@ -545,9 +549,18 @@ WinTag = New Window( "IP21PI Data Retrieval",
 
 											)
 										),
-										Border Box( Left( 26 ), lstAvailableTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) ) )
-					
-									),
+										// v4.0: collapsible AF element hierarchy (built after each
+										// search when the server has a PI AF server configured).
+										// Browsing aid — the selection happens in the list below.
+										afTreeOutline = Outline Box( "Asset hierarchy",
+											afTreeHolder = V List Box( Spacer Box( Size( 1, 1 ) ) )
+										),
+										Border Box( Left( 26 ), lstAvailableTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) ) ),
+										// v4.0: option under the results — also list tags that are
+										// not in the Asset Framework (plain DA points)
+										Border Box( Left( 26 ),
+											AF_IncludeDATags = Check Box( {"Also show tags not in AF (DA points)"} )
+										),
 									V List Box(
 										Border Box( Top( 145 * RatioY ), Right( 10 ), Left( 10 ),
 											bttn_AddTag = Button Box( "", 
@@ -1244,6 +1257,63 @@ WinTag = New Window( "IP21PI Data Retrieval",
 								), 
 
 							), // End Outine box Add Filter
+
+							// --------------------------------- EVENT FRAMES (v4.0, PI ONLY) --------------------------------- //
+							// Seeq-style "conditions": search the PI Event Frames of the AF
+							// server (by name and/or template) and restrict the extraction to
+							// the time windows of the selected frames. Rows get an EventFrame
+							// column labeling which frame they belong to.
+
+							Border Box( Top( 20 ),
+								Outline Box( "Event frames (PI)",
+									V List Box(
+										Border Box( Left( 15 ), Top( 10 ),
+											H List Box(
+												Lineup Box( N Col( 2 ),
+													Text Box( "Name:" ),
+													txtbox_EFName = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
+													Text Box( "Template:" ),
+													txtbox_EFTemplate = Text Edit Box( "", <<Set Width( 180 * RatioX ) )
+												),
+												Spacer Box( Size( 20, 10 ) ),
+												V Center Box(
+													bttn_FindEF = Button Box( "Find event frames",
+														/* Search frames overlapping the extraction window */
+														ef_start = Format( StartTime << Get(), "yyyy-mm-ddThh:mm:ss" );
+														ef_end = Format( EndTime << Get(), "yyyy-mm-ddThh:mm:ss" );
+														dt_EF = f_REST_FindEventFrames(
+															txtbox_EFName << Get Text,
+															txtbox_EFTemplate << Get Text,
+															ef_start, ef_end
+														);
+														EF_Names = Column( dt_EF, "Name" ) << Get Values;
+														EF_Templates = Column( dt_EF, "Template" ) << Get Values;
+														EF_Starts = Column( dt_EF, "Start" ) << Get Values;
+														EF_Ends = Column( dt_EF, "End" ) << Get Values;
+														Close( dt_EF, nosave );
+														lstbox_EventFrames << Remove All;
+														lst_ef_display = List();
+														For( i_ef = 1, i_ef <= N Items( EF_Names ), i_ef++,
+															Insert Into( lst_ef_display,
+																EF_Names[i_ef] || "  [" || EF_Templates[i_ef] || "]  " ||
+																EF_Starts[i_ef] || " -> " || EF_Ends[i_ef]
+															)
+														);
+														lstbox_EventFrames << Append( lst_ef_display );
+														f_Log( "INFO", Char( N Items( EF_Names ) ) || " event frame(s) found.", "EVENT FRAMES" );
+													)
+												)
+											)
+										),
+										Border Box( Left( 15 ), Top( 10 ),
+											lstbox_EventFrames = List Box( {}, <<Set Size( 1052 * RatioX, 120 * RatioY ) )
+										),
+										Border Box( Left( 15 ), Top( 6 ), Bottom( 10 ),
+											chk_UseEF = Check Box( {"Restrict extraction to the selected event frames"} )
+										)
+									)
+								)
+							),
 						
 							// --------------------------------- NEST / REMOVE FILTER --------------------------------- //
 						

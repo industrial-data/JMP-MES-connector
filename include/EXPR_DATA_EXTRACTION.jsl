@@ -80,6 +80,25 @@ EXPR_DATA_EXTRACTION = Expr(
 		f_Log( "INFO", "Option to compute the summary table activated.", section ),
 		f_Log( "INFO", "Option to compute the summary table disabled.", section )
 	);
+
+	/* v4.0: stack-by-asset option (AF selections only) */
+	int.StackAssets = Try( OptStackAssets << Get(), 0 );
+	If( int.StackAssets == 1,
+		f_Log( "INFO", "Option 'Stack by asset' activated: output = TS, TS_UTC, Asset, one column per attribute.", section )
+	);
+
+	/* v4.0: event-frame restriction (Filters tab, PI only) */
+	EFWindows_JSON = "";
+	Try(
+		If( (chk_UseEF << Get()) == 1,
+			ef_sel = As List( lstbox_EventFrames << Get Selected Indices );
+			EFWindows_JSON = f_EventFrames_ToJSON( ef_sel );
+			If( EFWindows_JSON == "",
+				f_DialogWarning( "'Restrict to event frames' is checked but no event frame is selected - option ignored." ),
+				f_Log( "INFO", Char( N Items( ef_sel ) ) || " event frame window(s) will restrict the extraction.", section )
+			);
+		)
+	);
 		
 	/* 1.3. Tags selection */
 	

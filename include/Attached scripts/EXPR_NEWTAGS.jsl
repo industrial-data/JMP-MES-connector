@@ -137,6 +137,13 @@ EXPR_ADDTAGS_UI = Expr(
 	LastSearchTagDesc = Expr( StrTagDesc );
 	
 	colNames = dt << GetColumnNames( "String" );
+/* v4.0: asset-stacked tables (Asset column) are not yet supported by this
+   script — the tag columns are shared across assets, so per-tag re-extraction
+   is ambiguous. Re-extract from the main window instead. */
+	If( Contains( colNames, "Asset" ),
+		f_DialogError( "This table is stacked by asset (v4.0). Update/Refresh and Add tags are not supported for stacked tables yet - please re-extract from the main window." )
+	);
+
 	TagType_AA = Associative Array();
 	TagSelect_AA = Associative Array();
 	ColTS = Associative Array();

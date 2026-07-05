@@ -47,6 +47,7 @@ import pandas as pd
 
 from . import filters as _filters
 from . import ip21_rest as _ip21
+from . import pi_af as _af
 from . import pi_webapi as _pi
 from .auth import (  # noqa: F401 (re-exported for JSL)
     AuthRequired,
@@ -56,7 +57,65 @@ from .auth import (  # noqa: F401 (re-exported for JSL)
     set_credentials,
 )
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
+
+
+# ---------------------------------------------------------------------------
+# v4.0 — PI Asset Framework (see pi_af.py for the endpoint documentation)
+# ---------------------------------------------------------------------------
+def search_af_attributes(base_url: str, af_server: str, name: str = "",
+                         description: str = "") -> pd.DataFrame:
+    """AF attribute search. Columns: tagnames (= full attribute path — the
+    extraction identity), descriptions, units, type, path (element path).
+    The JSL side renders `path` as a collapsible element tree."""
+    base = normalize_base_url("PI", base_url)
+    return _af.search_attributes(base, af_server, name, description)
+
+
+def pi_tag_or_attribute_type(base_url: str, da_server: str, name_or_path: str) -> str:
+    """Value type for a DA point or an AF attribute path (leading '\\\\')."""
+    base = normalize_base_url("PI", base_url)
+    if name_or_path.startswith("\\\\"):
+        return _af.attribute_type(base, name_or_path)
+    df = _pi.search_tags(base, da_server, name_or_path, "", max_results=50)
+    df = df[df["tagnames"] == name_or_path]
+    return str(df["type"].iloc[0]) if len(df) else ""
+
+
+def search_event_frames(base_url: str, af_server: str, name: str = "",
+                        template: str = "", start: str = "*-30d",
+                        end: str = "*") -> pd.DataFrame:
+    """Event frames overlapping [start, end]: Name/Template/Start/End/Path."""
+    base = normalize_base_url("PI", base_url)
+    return _af.search_event_frames(base, af_server, name, template, start, end)
+
+
+def _parse_event_frames_json(ef_json: str) -> list[dict]:
+    import json
+    if not ef_json or not ef_json.strip():
+        return []
+    return json.loads(ef_json).get("frames", [])
+
+
+def pi_extract_assets(base_url: str, attribute_paths: list[str], method: str,
+                      start: str, end: str, interval_s: int,
+                      filters_json: str = "", ef_json: str = "") -> pd.DataFrame:
+    """Asset-stacked extraction: TS, TS_UTC, Asset, <attribute name columns>.
+
+    One block of rows per asset (JMP Concatenate semantics — timestamps are
+    repeated per asset); missing attributes become missing values. Registered
+    filters and selected event frames are applied to the stacked table.
+    """
+    base = normalize_base_url("PI", base_url)
+    flt, condition, fe = _prepare_filters(filters_json)
+    out = _af.extract_assets(base, list(attribute_paths), method, start, end,
+                             int(interval_s), fe)
+    if flt and not fe:
+        out = _filters.apply_local_filters(out, flt, condition)
+    ef = _parse_event_frames_json(ef_json)
+    if ef:
+        out = _af.apply_event_frames(out, ef)
+    return out
 
 
 def normalize_base_url(server_type: str, url: str) -> str:
@@ -135,13 +194,16 @@ def _prepare_filters(filters_json: str):
 
 def pi_extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
                method: str, start: str, end: str, interval_s: int,
-               filters_json: str = "") -> pd.DataFrame:
+               filters_json: str = "", ef_json: str = "") -> pd.DataFrame:
     """One-shot PI extraction with the add-in's registered filters applied."""
     base = normalize_base_url("PI", base_url)
     flt, condition, fe = _prepare_filters(filters_json)
     wide = _pi.extract(base, da_server, tags, labels, method, start, end, interval_s, fe)
     if flt and not fe:
         wide = _filters.apply_local_filters(wide, flt, condition)
+    ef = _parse_event_frames_json(ef_json)
+    if ef:
+        wide = _af.apply_event_frames(wide, ef)
     return wide
 
 
@@ -151,13 +213,15 @@ _extract_session: dict = {}
 
 
 def pi_extract_begin(base_url: str, da_server: str, method: str, start: str,
-                     end: str, interval_s: int, filters_json: str = "") -> str:
+                     end: str, interval_s: int, filters_json: str = "",
+                     ef_json: str = "") -> str:
     flt, condition, fe = _prepare_filters(filters_json)
     _extract_session.clear()
     _extract_session.update(
         base=normalize_base_url("PI", base_url), da=da_server, method=method,
         start=start, end=end, interval=int(interval_s),
         flt=flt, condition=condition, fe=fe, parts=[],
+        ef=_parse_event_frames_json(ef_json),
     )
     return "OK"
 
@@ -182,6 +246,8 @@ def pi_extract_end() -> pd.DataFrame:
     out.insert(0, "TS", ts_utc.dt.tz_localize("UTC").dt.tz_convert(local_tz).dt.tz_localize(None))
     if s["flt"] and not s["fe"]:
         out = _filters.apply_local_filters(out, s["flt"], s["condition"])
+    if s.get("ef"):
+        out = _af.apply_event_frames(out, s["ef"])
     _extract_session.clear()
     return out
 

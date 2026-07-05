@@ -29,7 +29,7 @@
 // --------------------------------- 1. VERSION --------------------------------- //
  
 /* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
- Version = "2026@ V.3.0.0";
+ Version = "2026@ V.4.0.0";
 
 /* TLS certificate verification for the REST connections (1 = verify, default).
    Corporate CAs are honored via the OS certificate store. Only set to 0 for
@@ -104,17 +104,24 @@ NRow_limit_PI = 1e6;                // Max nb of rows per tag for PI data extrac
 NRow_limit_preview = 1e6;           // Max nb of rows per tag for preview
 max_n_attempts = 10;				// Maximal number of attempts 
 
-// Possible tag types
+// Possible tag types.
+// v3/v4: the REST transports return FULL type names (PI Web API point types
+// like Float32/Int16/Digital/String, AF attribute types like Double/Boolean),
+// while the OLEDB era used single letters (R/I/D/S) — both are listed so
+// labels and type checks work for old and new tables alike.
 IP21Types = {"Analog", "Discrete", "Text"};
-PITypes = {"R", "I", "D", "S"};
+PITypes = {"R", "I", "D", "S",
+	"Float16", "Float32", "Float64", "Int16", "Int32", "Int64", "Digital", "String", "Timestamp",
+	"Double", "Single", "Boolean", "EnumerationValue"};
 AllTypes = List();
 Insert Into( AllTypes, IP21Types );
 Insert Into( AllTypes, PITypes );
-IP21NumTags = {"Analog","AI"};
-IP21TextTags = {"Discrete", "Text","DI"};
-PINumTags = {"R", "I"};
-PITextTags = {"D", "S"};
-PreviewTags = {"Discrete", "Text","DI","D", "S","I"};
+IP21NumTags = {"Analog", "AI"};
+IP21TextTags = {"Discrete", "Text", "DI"};
+PINumTags = {"R", "I", "Float16", "Float32", "Float64", "Int16", "Int32", "Int64", "Double", "Single"};
+PITextTags = {"D", "S", "Digital", "String", "Boolean", "EnumerationValue"};
+PreviewTags = {"Discrete", "Text", "DI", "D", "S", "I",
+	"Digital", "String", "Boolean", "EnumerationValue", "Timestamp"};
 
 
 /* List of numerical comparator for filters */

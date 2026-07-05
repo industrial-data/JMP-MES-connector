@@ -74,13 +74,29 @@ Every HTTP request URL is `print()`ed so it appears in the JMP log (v2.x did
 the same with its PowerShell commands). Look for `GET https://.../streams/...`
 lines when an extraction misbehaves. Toggle with `pi_webapi.LOG_URLS`.
 
-## Planned: PI AF attribute search (groundwork present, not implemented)
+## v4.0: PI Asset Framework (pi_af.py)
 
-When `PI_AF_Server` is set, a future search mode will browse AF elements
-(`/assetservers` → `/assetdatabases` → `/elements` → `/attributes`) and show a
-collapsible hierarchy (JSL Tree Box) of elements with their attributes;
-result labels become `tagname (description) [units] {path}`. `search_tags`
-already accepts `af_server` and returns a `path` column for this.
+When `PI_AF_Server` is set, the search runs against the ASSET FRAMEWORK
+(`/assetdatabases/{id}/elementattributes`, `searchFullHierarchy=true`): every
+attribute matching the name/description filters is returned, identified by its
+full AF path (`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders
+the results as a collapsible element tree (Tree Box) and labels them
+`attr (description) [units] {path}`. DA points not in AF are appended when the
+user ticks the option under the results. Attribute WebIds are streamable, so
+extraction reuses the same /streams code (`_point_info` resolves paths via
+`/attributes?path=`).
+
+**Asset-stacked extraction** (`pi_extract_assets`): attributes grouped by
+parent element; output is `TS, TS_UTC, [EventFrame], Asset, <one column per
+attribute NAME>` — rows concatenated per asset (JMP Tables > Concatenate
+semantics: timestamps repeat once per asset), missing attributes become
+missing values. This gives Seeq-style asset swapping through a simple row
+filter instead of one column per asset-attribute pair.
+
+**Event frames** (`search_event_frames` + `apply_event_frames`): frames
+overlapping the extraction window can be searched by name/template; the JSL
+Filters tab lets users restrict the extraction to the selected frames' time
+windows — matching rows keep an `EventFrame` label column.
 
 ## Contracts with the JSL side (do not break these)
 
