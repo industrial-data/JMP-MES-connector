@@ -84,10 +84,7 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 /* 1.3. Server information */	
 			
 	MES = Expr( MES );
-	SiteName = Expr( SiteName );
 	ServerType = Expr( ServerType );
-	NetworkNode = Expr( NetworkNode );
-	ShortName = Expr( ShortName );
 	is_checked = Expr( is_checked );
 	// v3.0: REST transport parameters (replace the removed OLEDB/PowerShell ones)
 	WebAPIURL = Expr( WebAPIURL );
@@ -97,8 +94,7 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 				
 	f_Log(
 		"INFO",
-		"Server information - MES " || Char( MES ) || " / Server type " || Char( ServerType ) || " / SiteName " || Char( SiteName ) ||
-		" / NetworkNode " || Char( NetworkNode ) || " / ShortName " || Char( ShortName )
+		"Server information - MES " || Char( MES ) || " / Server type " || Char( ServerType ) || " / WebAPI URL " || Char( WebAPIURL )
 	);
 	
 		
@@ -233,16 +229,17 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 				H List Box(
 					outlinebox_parameters = Outline Box( "Frozen parameters",
 						Border Box( Top( 10 ),
+							/* v3.0: Location / Network node / Name rows removed — those were
+							   OLEDB-era fields; the server is identified by its name + WebAPI URL */
 							tblbox_parameters = Table Box(
-								String Col Box( "General", {"SERVER", "", "", "", "", "", "EXTRACTION", "", "", "", "TAG(S)"} ),
+								String Col Box( "General", {"SERVER", "", "", "", "EXTRACTION", "", "", "", "TAG(S)"} ),
 								String Col Box( "Parameter",
-									{"Server", "Location", "Network node", "Name", "Server type", "", "Extraction method", "Period", "Unit", ""}
+									{"Server", "Server type", "WebAPI URL", "", "Extraction method", "Period", "Unit", ""}
 								),
 								valuecolbox = String Col Box( "Value",
-									{MES, SiteName, NetworkNode, ShortName, ServerType, "", ExtractionMethod, Char( PeriodNumValue ), PeriodUnits, ""
-									}
+									{MES, ServerType, WebAPIURL, "", ExtractionMethod, Char( PeriodNumValue ), PeriodUnits, ""}
 								)
-							
+
 							)
 						)
 					),
@@ -399,7 +396,7 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	EndTime << Set Format( Format( "yyyy-mm-ddThh:mm:ss" ) );
 
 	// Add tags in frozen paramters table
-	For Each( {{key, value}, index}, TagSelect_AA, tblbox_parameters << Add Row( {1, "", key} ) );
+	For Each( {{key, value}, index}, TagSelect_AA, tblbox_parameters << Add Row( {"", "", key} ) );
 	
 	//Add filters
 	lstFiltersRegistered << Append( lstFilters );
