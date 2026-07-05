@@ -68,7 +68,7 @@ EXPR_DATA_EXTRACTION = Expr(
 	Try( Save Text File(
 		str.PathLastServerSelected,
 		Eval Insert(
-			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";"
+			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";"
 		)
 	) );
 	

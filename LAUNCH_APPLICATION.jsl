@@ -50,6 +50,22 @@ If( Host is( "Mac" ),
 
 strPath = Get Path Variable( "ADDIN_HOME(MES.Data.Retrieval.OS2.2)" ); //PROD
 
+/* DEV mode: when LAUNCH_APPLICATION.jsl is run directly from the repository
+   (add-in not installed / not deployed), the add-in path variable is empty or
+   stale. In that case resolve every path from the folder the script was run
+   from (JMP's default directory at this exact moment), validated by looking
+   for config/config.jsl next to this script. */
+If( strPath == "" | !File Exists( strPath || "config/config.jsl" ),
+	strPath = Get Default Directory();
+);
+If( !File Exists( strPath || "config/config.jsl" ),
+	Throw(
+		"Cannot locate the add-in files: '" || Char( strPath ) ||
+		"config/config.jsl' not found. Install the add-in, or run LAUNCH_APPLICATION.jsl from the repository folder."
+	)
+);
+Print( "INFO:        Add-in home - " || Char( strPath ) );
+
 
 
 
@@ -392,7 +408,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												Try( Save Text File(
 													str.PathLastServerSelected,
 													Eval Insert(
-														"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";"
+														"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";"
 													)
 												) );
 
@@ -1439,13 +1455,17 @@ Try(
 		txtbox_ServerAddress << set Text( Recall.MES );
 		txtbox_ServerExtension << set Text( Recall.Extension );
 		txtbox_Shortname << set text( Recall.ShortName );
+		// v3.0: also recall the REST fields (Try: recall files from older
+		// versions don't have them yet)
+		Try( txtbox_WebAPIURL << Set Text( Char( Recall.WebAPIURL ) ) );
+		Try( txtbox_PIAFServer << Set Text( Char( Recall.PIAFServer ) ) );
 		Match( Recall.ServerType, "IP21", rdbox_ServerType << set( 1 ), rdbox_ServerType << set( 2 ) );
 		chkbox_edit_adress << set( 1 );
 		panel_ServerAdress << Visibility( "Visible" );
-	, 
-		
+	,
+
 	);
-	
+
 );
 
 /* Initialize Start Time and End Time */

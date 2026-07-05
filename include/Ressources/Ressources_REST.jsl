@@ -83,11 +83,9 @@ f_REST_InitPython = Function( {},
 	);
 
 	// --- 1) Locate the package folder -----------------------------------
+	// strPath is resolved and validated at launch (LAUNCH_APPLICATION.jsl),
+	// covering both the installed add-in and dev runs from the repository.
 	str.pkg_jmp_path = strPath || "include/Ressources/python";
-	If( !Try( Directory Exists( str.pkg_jmp_path ), 0 ),
-		// Dev mode: script run from the repo without the add-in installed
-		str.pkg_jmp_path = Get Default Directory() || "include/Ressources/python"
-	);
 	If( !Try( Directory Exists( str.pkg_jmp_path ), 0 ),
 		f_DialogError(
 			"mes_connector python package not found at: " || Char( str.pkg_jmp_path ) ||
