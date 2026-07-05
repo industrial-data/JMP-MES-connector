@@ -64,7 +64,7 @@ strPathServerlist = "https://github.com/industrial-data/JMP-MES-connector/raw/re
 
 
 // =====  2.3 USER GUIDE PATH =====  //
-strPathHelpDoc = strPath || "doc/MES Data retrieval - User Guide - OS.pdf"  ;
+strPathHelpDoc = strPath || "doc/MES Data retrieval - User Guide.html";
 
 
 // =====  2.4 GUARDBAND PATH =====  //

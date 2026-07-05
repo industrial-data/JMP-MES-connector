@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MES Data Retrieval — Administrator Guide (v3.0)</title>
+<style>
+  body { font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #222; max-width: 900px;
+         margin: 0 auto; padding: 2em 1.5em; line-height: 1.55; }
+  h1 { color: #059fe0; border-bottom: 3px solid #059fe0; padding-bottom: .3em; }
+  h2 { color: #04729f; border-bottom: 1px solid #d8e6ee; padding-bottom: .2em; margin-top: 2em; }
+  h3 { color: #04729f; margin-top: 1.5em; }
+  img { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; margin: .8em 0; display: block; }
+  code, pre { background: #f4f6f8; border-radius: 4px; padding: .1em .35em; font-size: .95em; }
+  pre { padding: .8em 1em; overflow-x: auto; }
+  table { border-collapse: collapse; margin: 1em 0; }
+  th, td { border: 1px solid #c8d4dc; padding: .4em .7em; text-align: left; vertical-align: top; }
+  th { background: #eef5f9; }
+  .note { background: #eef7ff; border-left: 4px solid #059fe0; padding: .7em 1em; margin: 1em 0; }
+  .warn { background: #fff7e6; border-left: 4px solid #e0a105; padding: .7em 1em; margin: 1em 0; }
+  .legacy { color: #666; font-size: .9em; }
+</style>
+</head>
+<body>
+
+<h1>MES Data Retrieval JMP Add-in — Administrator Guide</h1>
+<p><strong>Version 3.0</strong> — REST edition (PI Web API / Aspen Process Data REST)</p>
+
+<p>This document describes the administrative tasks required to manage the add-in and its
+code architecture. It is intended for the system administrator in charge of the add-in.
+For installation and usage, see
+<a href="MES Data retrieval - User Guide.html">the User Guide</a>.</p>
+
+<div class="note">
+<strong>v3.0 in one paragraph:</strong> all extraction goes through the historians' REST
+services — the OLEDB/ODBC/PowerShell paths were removed entirely. PI is served natively by
+the <em>PI Web API</em>; IP21 keeps the proven SQLplus queries, now wrapped in POSTs to the
+<em>Aspen Process Data REST service</em> (<code>AtProcessDataREST.dll/SQL</code>). The REST
+calls are made by a small Python package embedded in the add-in
+(<code>include/Ressources/python/mes_connector</code>), driven from JSL through JMP's
+embedded Python. Windows and macOS run the identical code path.
+</div>
+
+<h2>Table of contents</h2>
+<nav><ul>
+  <li><a href="#requirements">System requirements</a></li>
+  <li><a href="#serverlist">The server list (MES_servers_list.xlsx)</a></li>
+  <li><a href="#security">Authentication, credentials &amp; TLS</a></li>
+  <li><a href="#architecture">Code architecture</a></li>
+  <li><a href="#python">The Python layer (mes_connector)</a></li>
+  <li><a href="#config">Configuration (config.jsl)</a></li>
+  <li><a href="#debug">Debugging</a></li>
+  <li><a href="#deploy">Deployment</a></li>
+</ul></nav>
+
+<h2 id="requirements">System requirements</h2>
+<ul>
+  <li><strong>JMP 18 or later</strong> (embedded Python with pandas is used to call the
+      REST services and hand results back as data tables).</li>
+  <li>Network access to the historian REST endpoints (enterprise network or VPN):
+      PI Web API (usually HTTPS, port 443) and/or Aspen Process Data REST
+      (<code>http(s)://&lt;host&gt;/ProcessData/AtProcessDataREST.dll</code>).</li>
+  <li>One-time internet/proxy access on first run so the add-in can install the
+      <code>requests</code> Python package into JMP's isolated Python environment
+      (optionally also <code>keyring</code>, <code>truststore</code> and, on Windows,
+      <code>requests-negotiate-sspi</code> for silent SSO).</li>
+</ul>
+<div class="note">Former v2.x requirements that are <strong>no longer needed</strong>:
+Aspen SQLplus ODBC driver, PI OLEDB Enterprise, PI Process Book / PI client tools,
+PowerShell execution rights.</div>
+
+<h2 id="serverlist">The server list — MES_servers_list.xlsx</h2>
+<p>The list of servers offered to users is an Excel file downloaded at launch from the URL
+configured in <code>config.jsl</code> (<code>strPathServerlist</code>). Sheet name:
+<code>MES_servers_list</code>. Columns:</p>
+<table>
+  <tr><th>Column</th><th>Required</th><th>Content</th></tr>
+  <tr><td><code>site</code></td><td>no</td>
+      <td>Display name shown to users in the server list
+          (<code>site [type] - server</code>). Not used by the extraction itself. When
+          empty, the server name is displayed instead.</td></tr>
+  <tr><td><code>server</code></td><td><strong>yes</strong></td>
+      <td>PI Data Archive server name, or IP21 ADSA data source name (usually the IP21
+          host name).</td></tr>
+  <tr><td><code>Type</code></td><td><strong>yes</strong></td><td><code>PI</code> or <code>IP21</code>.</td></tr>
+  <tr><td><code>WebAPI_URL</code></td><td><strong>yes</strong></td>
+      <td>REST endpoint. Tolerant to missing scheme and trailing slash; a bare host is
+          completed automatically to <code>/piwebapi</code> or
+          <code>/ProcessData/AtProcessDataREST.dll</code>. A server without a URL cannot
+          be queried (there is no driver fallback in v3.0).</td></tr>
+  <tr><td><code>PI_AF_Server</code></td><td>no</td>
+      <td>PI Asset Framework server name — reserved for the planned AF attribute search
+          (collapsible element hierarchy; result labels
+          <code>tag (description) [units] {path}</code>).</td></tr>
+</table>
+<p>To administer servers: edit the Excel in the repository (or the location your
+organization publishes it to) and commit/push — every user picks it up at next launch.</p>
+
+<h2 id="security">Authentication, credentials &amp; TLS</h2>
+<ul>
+  <li><strong>Order of authentication attempts:</strong> silent SSO (Windows
+      SSPI/Negotiate, or Kerberos where configured) → credentials stored in the OS
+      credential vault → interactive login dialog.</li>
+  <li><strong>Credential storage:</strong> the login dialog's <em>“Remember on this
+      computer”</em> writes the credentials to the <strong>Windows Credential
+      Manager</strong> / <strong>macOS Keychain</strong> (via the <code>keyring</code>
+      package) — encrypted at rest by the OS, per user, never stored in files or logs. A
+      stored password that receives a 401 is deleted immediately.</li>
+  <li><strong>Interception safeguards:</strong> basic credentials are refused over plain
+      <code>http://</code> (SSO is still allowed there — Kerberos never transmits the
+      password). TLS certificates are verified by default, against the OS certificate
+      store when the <code>truststore</code> package is present (so corporate CAs work as
+      in a browser).</li>
+  <li><strong>Self-signed plant servers:</strong> set <code>int.TLSVerify = 0</code> in
+      <code>config.jsl</code> — a logged, deliberate opt-out. Prefer installing the
+      proper CA.</li>
+</ul>
+
+<h2 id="architecture">Code architecture</h2>
+<p>The source is organized as one main script plus four folders:</p>
+<pre>
+LAUNCH_APPLICATION.jsl      main script: resolves paths, includes dependencies, builds the GUI
+config/config.jsl           hard-coded parameters, paths, version
+include/                    all JSL dependencies (only *.jsl files are included)
+  EXPR_ADD_FILTER.jsl         "Add filter" button logic
+  EXPR_DATA_EXTRACTION.jsl    "Run extraction" button logic
+  EXPR_PREVIEW.jsl            "Preview" button logic
+  ProgressBar.jsl             extraction progress bar
+  Attached scripts/           the 4 scripts attached to extracted tables
+  Ressources/
+    Ressources_REST.jsl       JSL &lt;-&gt; Python bridge (v3.0)
+    Ressources_SQL.jsl        IP21 SQLplus queries + query functions (REST transport)
+    Ressources_Utilities.jsl  all utility functions incl. f_RunExtraction
+    python/mes_connector/     the Python REST layer (see below)
+doc/                        this documentation + extracted images (img/)
+deployment/                 built .jmpaddin packages
+</pre>
+<p><strong>Path resolution:</strong> <code>strPath</code> is the add-in home
+(<code>ADDIN_HOME(MES.Data.Retrieval.OS2.2)</code>). When the add-in is not installed
+(development), <code>LAUNCH_APPLICATION.jsl</code> falls back to the folder it was run
+from, validated by locating <code>config/config.jsl</code>. The attached table scripts use
+the same fallback.</p>
+
+<h3>Attached scripts &amp; column properties</h3>
+<p>The four scripts attached to extracted tables (Update/Refresh, Add tags, Guardband,
+Additional tools) identify tags through column properties:</p>
+<ul>
+  <li><code>addin_colname</code> — output column name (also flags <code>TS</code>/<code>TS_UTC</code>)</li>
+  <li><code>tagname_desc_unit</code> — tag name with unit and description (the column label)</li>
+  <li><code>tagname</code> — bare tag name</li>
+  <li><code>tagtype</code> — tag type</li>
+</ul>
+<div class="warn">Tables extracted with v2.x carry the old attached-script code (with
+OLEDB references) baked in; users must re-extract to get working v3.0 scripts.</div>
+
+<h3>Ressources_SQL.jsl (IP21 SQL over REST)</h3>
+<p>Contains the IP21 SQLplus queries (prefix <code>__SQL</code>) and the query functions
+(prefix <code>f_SQL_</code>). Values substituted into queries use the <code>VAR_</code>
+prefix. The queries are unchanged from v2.x — only the transport changed: they are POSTed
+to Aspen's REST service by <code>f_IP21_REST_SQL</code>. PI no longer uses SQL at all;
+the <code>f_SQL_*</code> functions dispatch PI calls to the Python layer
+(point search, tag type, preview, extraction).</p>
+<p>Extraction method mapping (IP21): Actual → <code>REQUEST 4</code> on
+<code>HISTORY(80)</code>; Interpolated → <code>REQUEST 6</code>; Step Interpolated →
+<code>REQUEST 6</code> with <code>STEPPED = 1</code>; Average → <code>AGGREGATES</code>
+<code>REQUEST 1</code>. IP21's <code>PERIOD</code> is expressed in tenths of a second.</p>
+
+<h2 id="python">The Python layer — mes_connector</h2>
+<p>Located at <code>include/Ressources/python/mes_connector/</code> and called from
+<code>Ressources_REST.jsl</code> via JMP's embedded Python
+(<code>Python Submit</code>/<code>Python Get</code>; pandas DataFrames convert to JMP
+tables natively). Modules:</p>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>auth.py</code></td><td>Sessions, SSO, OS-vault credentials, TLS policy,
+      401 → login-dialog signalling.</td></tr>
+  <tr><td><code>pi_webapi.py</code></td><td>PI Web API: uncapped point search, parallel
+      extraction (interpolated / recorded / summary), Step Interpolated =
+      recorded (<code>boundaryType=Outside</code>) forward-filled onto the aligned grid.</td></tr>
+  <tr><td><code>ip21_rest.py</code></td><td>POST SQLplus text to
+      <code>AtProcessDataREST.dll/SQL</code>, XML row set → DataFrame; Browse controller
+      for connection tests.</td></tr>
+  <tr><td><code>filters.py</code></td><td>GUI filters → PI <code>filterExpression</code>
+      (simple comparisons, server-side) or pandas masks (<code>Like/Not Like/In</code>).</td></tr>
+  <tr><td><code>__init__.py</code></td><td>Public API used by JSL; URL normalization;
+      chunked extraction session that drives the JSL progress bar.</td></tr>
+</table>
+<p>Read <code>mes_connector/README.md</code> before modifying the Python layer — it
+documents the JSL↔Python contracts (exact column names the GUI depends on).</p>
+<p><strong>Python environment:</strong> JMP's Python is isolated with its own
+site-packages. On first init the add-in installs <code>requests</code> if missing
+(mandatory) and tries <code>keyring</code>/<code>truststore</code> (optional) plus
+<code>requests-negotiate-sspi</code> on Windows (optional, enables silent SSO). All
+installs go through <code>Python Install Packages</code> (JMP's pip).</p>
+
+<h2 id="config">Configuration — config.jsl</h2>
+<table>
+  <tr><th>Variable</th><th>Meaning</th></tr>
+  <tr><td><code>Version</code></td><td>Version string shown in the GUI and the log.</td></tr>
+  <tr><td><code>int.TLSVerify</code></td><td>1 (default) = verify TLS certificates;
+      0 = accept self-signed (logged opt-out).</td></tr>
+  <tr><td><code>strPathServerlist</code></td><td>URL (or path) of
+      <code>MES_servers_list.xlsx</code>. Note it is currently overridden in
+      <code>LAUNCH_APPLICATION.jsl</code> (SERVER LIST section) — change both.</td></tr>
+  <tr><td><code>str.PathReport</code> / <code>str.PathAppState</code></td>
+      <td>User-writable folders under Documents for reports and state files
+          (window size, last server, guardband recall).</td></tr>
+  <tr><td><code>NRow_limit_IP21</code> / <code>NRow_limit_PI</code></td>
+      <td>Row limit per tag (default 1,000,000).</td></tr>
+  <tr><td><code>max_n_attempts</code></td><td>Extraction retry budget (IP21 loop).</td></tr>
+  <tr><td><code>strPathHelpDoc</code></td><td>Document opened by the Help button.</td></tr>
+</table>
+
+<h2 id="debug">Debugging</h2>
+<ul>
+  <li><strong>Every REST request URL is echoed in the JMP log</strong> with its HTTP
+      status (<code>GET https://…/streams/…/interpolated?… -&gt; 200</code>) — the same
+      philosophy as v2.x echoing its PowerShell commands. Open the log with
+      Ctrl+Shift+L.</li>
+  <li>The <code>Python init - OK 3.0.0 | python 3.x | &lt;path&gt;</code> log line
+      confirms the Python layer loaded; an <code>IMPORT_ERROR:</code> line names the
+      missing piece.</li>
+  <li>Aspen errors are returned inside the REST payload and surfaced verbatim
+      (<code>IP21 REST error: …</code>); non-XML answers (proxy/HTML error pages) are
+      reported with the beginning of the payload.</li>
+  <li>Auth loops: a 401 with stored credentials deletes them from the OS vault and
+      re-prompts — check the account/password with the historian team.</li>
+</ul>
+
+<h2 id="deploy">Deployment</h2>
+<p>Package the add-in as a <code>.jmpaddin</code> (zip of the repository content plus the
+add-in definition) and distribute; see the <code>deployment/</code> folder for built
+packages. The add-in ID is <code>MES.Data.Retrieval.OS2.2</code> — keep it unchanged so
+existing installations upgrade in place and <code>ADDIN_HOME</code> resolution keeps
+working. Remember to include the <code>include/Ressources/python/mes_connector</code>
+folder in the package (plain <code>.py</code> files, no build step).</p>
+
+<hr>
+<p class="legacy">Guide regenerated from the v2.0 PDF (2023-11-17) and rewritten for
+add-in v3.0 (2026). Legacy screenshots from the v2.0 guide are kept under
+<code>doc/img/admin-guide/</code>; most depicted the OLEDB/ODBC internals that no longer
+exist and are therefore not embedded here.</p>
+
+</body>
+</html>

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MES Data Retrieval — User Guide (v3.0)</title>
+<style>
+  body { font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #222; max-width: 900px;
+         margin: 0 auto; padding: 2em 1.5em; line-height: 1.55; }
+  h1 { color: #059fe0; border-bottom: 3px solid #059fe0; padding-bottom: .3em; }
+  h2 { color: #04729f; border-bottom: 1px solid #d8e6ee; padding-bottom: .2em; margin-top: 2em; }
+  h3 { color: #04729f; margin-top: 1.5em; }
+  img { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; margin: .8em 0; display: block; }
+  code, pre { background: #f4f6f8; border-radius: 4px; padding: .1em .35em; font-size: .95em; }
+  pre { padding: .8em 1em; overflow-x: auto; }
+  table { border-collapse: collapse; margin: 1em 0; }
+  th, td { border: 1px solid #c8d4dc; padding: .4em .7em; text-align: left; }
+  th { background: #eef5f9; }
+  .note { background: #eef7ff; border-left: 4px solid #059fe0; padding: .7em 1em; margin: 1em 0; }
+  .warn { background: #fff7e6; border-left: 4px solid #e0a105; padding: .7em 1em; margin: 1em 0; }
+  .legacy { color: #666; font-size: .9em; }
+  nav li { margin: .15em 0; }
+</style>
+</head>
+<body>
+
+<h1>MES Data Retrieval JMP Add-in — User Guide</h1>
+<p><strong>Version 3.0</strong> — REST edition (PI Web API / Aspen Process Data REST)</p>
+
+<div class="note">
+<strong>What changed in v3.0:</strong> the add-in now talks to the historians over their
+REST web services — the <em>PI Web API</em> for OSIsoft/Aveva PI and the <em>Aspen Process
+Data REST service</em> for InfoPlus.21. <strong>No local drivers are required anymore</strong>
+(no PI OLEDB, no SQLplus ODBC, no PowerShell), and the add-in behaves identically on
+Windows and macOS. A new <em>Step Interpolated</em> extraction method was added, passwords
+can be securely remembered in the OS credential vault, and the server list was simplified.
+</div>
+
+<h2>Table of contents</h2>
+<nav><ul>
+  <li><a href="#intro">Introduction</a></li>
+  <li><a href="#requirements">System requirements</a></li>
+  <li><a href="#install">Add-in installation</a></li>
+  <li><a href="#overview">Getting started — overview</a></li>
+  <li><a href="#server">Server details &amp; authentication</a></li>
+  <li><a href="#methods">Extraction methods</a></li>
+  <li><a href="#filters">Filters management</a></li>
+  <li><a href="#table">Table of extracted data</a></li>
+  <li><a href="#scripts">Additional scripts (Update/Refresh, Add tags, Guardband, Tools)</a></li>
+  <li><a href="#troubleshooting">Troubleshooting</a></li>
+</ul></nav>
+
+<h2 id="intro">Introduction</h2>
+<p>This add-in automates data extraction from Aspentech IP.21 and OSIsoft/Aveva PI
+historians, so you can use JMP to diagnose manufacturing problems and monitor tags daily
+and weekly.</p>
+
+<h2 id="requirements">System requirements</h2>
+<ul>
+  <li><strong>JMP 18 or later</strong> (the add-in uses JMP's embedded Python).</li>
+  <li>Network access (enterprise network or VPN) to the historian's REST endpoint:
+    <ul>
+      <li>PI: the <strong>PI Web API</strong> address, e.g. <code>https://piserver.company.com/piwebapi</code></li>
+      <li>IP21: the <strong>Aspen Process Data REST</strong> address, e.g.
+          <code>http://ip21server.company.com/ProcessData/AtProcessDataREST.dll</code></li>
+    </ul></li>
+  <li>Read permissions on the historian (your Windows/AD account, or a login provided by
+      the administrator).</li>
+</ul>
+<div class="note">Unlike v2.x, <strong>no client drivers are needed</strong>: the former
+requirements (Aspen SQLplus ODBC driver, PI OLEDB Enterprise, PI Process Book) are gone.
+If a server is missing from the list or its WebAPI URL is unknown, contact your
+administrator.</div>
+
+<h2 id="install">Add-in installation</h2>
+<p>Download the <code>.jmpaddin</code> file and double-click it. JMP asks to install (or
+re-install) the add-in — click <em>Install</em>. A new menu entry appears under
+<em>Add-Ins</em>.</p>
+<img src="img/user-guide/p03_1.png" alt="JMP install dialog">
+<img src="img/user-guide/p03_2.png" alt="Add-in menu entry">
+<p>On first use the add-in prepares its Python environment automatically (it may install
+the <code>requests</code> package once — this needs internet access through your proxy).</p>
+
+<h2 id="overview">Getting started — overview</h2>
+<img src="img/user-guide/p04_1.png" alt="Main interface overview" class="legacy">
+<p class="legacy">Screenshot from v2.x — the v3 window is identical except for the
+simplified “Server details” panel described below.</p>
+<p>The main interface allows you to:</p>
+<ol>
+  <li>Select a server from the server list — entries display as
+      <code>site [type] - server</code> (the site name comes from the server list; when
+      empty, the server name is shown) — or enter the details manually
+      (<em>Edit server address</em>), and set the name of the extracted table.</li>
+  <li>Find tags by tag name and/or description. <strong>The search is uncapped</strong>:
+      it pages through the server until all matches are returned.</li>
+  <li>Add selected tag(s), or paste tag names copied from a spreadsheet (remove any unit
+      or description from pasted names).</li>
+  <li>Set options (workflow, summary table).</li>
+  <li>Choose the start and end date (defaults: now and 24 h earlier).</li>
+  <li>Choose the extraction method (see <a href="#methods">Extraction methods</a>).</li>
+  <li>Choose the extraction period (10 minutes by default).</li>
+  <li>Add filter(s) on tag(s).</li>
+  <li>Manage the added filters (including nesting).</li>
+</ol>
+
+<h2 id="server">Server details &amp; authentication</h2>
+<p>Check <em>Edit server address</em> to view or override the connection fields:</p>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><strong>Server name</strong> (mandatory)</td>
+      <td>PI Data Archive server name, or IP21 data source name (usually the IP21 host).</td></tr>
+  <tr><td><strong>WebAPI URL</strong> (mandatory)</td>
+      <td>The REST endpoint. Tolerant input: with or without <code>https://</code> and a
+          trailing <code>/</code>; a bare host is completed automatically to
+          <code>/piwebapi</code> (PI) or <code>/ProcessData/AtProcessDataREST.dll</code> (IP21).</td></tr>
+  <tr><td><strong>PI AF server</strong> (optional)</td>
+      <td>PI Asset Framework server — reserved for the upcoming attribute search.</td></tr>
+  <tr><td><strong>Server type</strong></td><td>IP21 or PI.</td></tr>
+</table>
+<p><strong>Authentication</strong> is attempted silently first (Windows single sign-on /
+Kerberos). If the server requires an explicit login, a dialog asks for username and
+password. Tick <em>“Remember on this computer”</em> to store them securely in the
+<strong>Windows Credential Manager</strong> or <strong>macOS Keychain</strong> — encrypted
+by the operating system, never written to files, and removed automatically if the password
+stops working.</p>
+
+<h2 id="methods">Extraction methods</h2>
+<table>
+  <tr><th>Method</th><th>What you get</th></tr>
+  <tr><td>Interpolated</td><td>Values interpolated at the chosen period.</td></tr>
+  <tr><td>Average</td><td>Time-weighted averages per period.</td></tr>
+  <tr><td>Actual</td><td>The raw recorded values (no period).</td></tr>
+  <tr><td><strong>Step Interpolated</strong> <em>(new in 3.0)</em></td>
+      <td>Staircase interpolation: the last recorded value is held until the next change,
+          sampled at the chosen period. Recommended for setpoints, recipe steps, discrete
+          and slow-changing tags.</td></tr>
+</table>
+<p>The extraction runs in parallel batches with a progress bar; a high row limit per tag
+(1,000,000) protects the server. Please notify your OT/IT team before massive
+extractions.</p>
+<img src="img/user-guide/p06_1.png" alt="Progress bar" class="legacy">
+
+<h2 id="filters">Filters management</h2>
+<h3>Add filters</h3>
+<img src="img/user-guide/p07_1.png" alt="Filters tab">
+<ol>
+  <li>Select the tag to filter on.</li>
+  <li>Select the comparator: <code>&gt; &lt; &gt;= &lt;=</code> for continuous numeric
+      tags; <code>In</code>, <code>Like</code>, <code>Not Like</code> for discrete/text
+      tags; <code>=</code> and <code>Not Equal</code> for both.</li>
+  <li>Enter the filter value. With <code>In</code>, list several values separated by the
+      separator you define (e.g. <code>VALUE1 / VALUE2 / VALUE3</code> with separator <code>/</code>).</li>
+  <li>Click <em>Add</em>, or <em>Preview</em> (discrete/text tags) to list the distinct
+      values of the tag over the selected window.</li>
+</ol>
+<img src="img/user-guide/p08_1.png" alt="Preview window">
+<div class="note">How filters are executed in v3.0: for IP21 they are part of the SQL sent
+to the server (unchanged from v2.x). For PI, simple comparisons are evaluated by the PI
+server itself (<code>filterExpression</code>); <code>Like</code>/<code>Not Like</code>/
+<code>In</code> are applied by the add-in after extraction. The result is the same in all
+cases. On PI, the <em>Preview</em> lists values without applying the already-registered
+filters (they are applied at extraction).</div>
+<h3>Modify filters</h3>
+<img src="img/user-guide/p08_2.png" alt="Filter selection">
+<ol>
+  <li>Choose the construction type: <em>If ALL conditions are met</em> (AND) or
+      <em>If ANY conditions are met</em> (OR). Changing it removes nested filters.</li>
+  <li>Select a filter to modify.</li>
+  <li>Remove selected filter(s) or all. Select 2 filters to <em>Nest</em> them:
+      with ALL, nesting gives <code>(F1 OR F2) AND F3</code>; with ANY,
+      <code>(F1 AND F2) OR F3</code>. At most 2 filters can be nested.</li>
+</ol>
+
+<h2 id="table">Table of extracted data</h2>
+<img src="img/user-guide/p09_1.png" alt="Extracted table" class="legacy">
+<p>After extraction a JMP table opens (default name: today's date + server name) with:</p>
+<ol>
+  <li><strong>Table variables</strong> recalling the extraction settings (Servername,
+      Start/End Time, Method, Frequency, Unit, Filters…). Do not edit them manually — the
+      additional scripts use them.</li>
+  <li><strong>Attached scripts</strong>: Update/Refresh, Add tags, Guardband, Additional tools.</li>
+  <li>The extracted tags; the first two columns are the timestamps <code>TS</code>
+      (local time) and <code>TS_UTC</code>. Do not delete the timestamp columns.</li>
+</ol>
+
+<h2 id="scripts">Additional scripts</h2>
+
+<h3>Update / Refresh</h3>
+<img src="img/user-guide/p10_1.png" alt="Update/Refresh window" class="legacy">
+<ol>
+  <li><em>Frozen parameters</em> — server, WebAPI URL, extraction method and tags cannot
+      be changed here.</li>
+  <li>Choose <strong>Update</strong> or <strong>Refresh</strong>. In v3.0 the window is
+      prefilled with <em>Start = the oldest timestamp present in the table</em> and
+      <em>End = now</em>.
+      <ul>
+        <li><strong>Update</strong> extends/completes the table. If the chosen window
+            overlaps existing rows, the overlapping rows are <em>replaced</em> by the
+            fresh extraction (no duplicated timestamps).</li>
+        <li><strong>Refresh</strong> re-extracts and replaces the whole table content.
+            The existing rows are only removed <em>after</em> the new extraction
+            succeeded.</li>
+      </ul></li>
+  <li>Options (summary table, workflow).</li>
+  <li>Remove or update registered filter(s) for this run only.</li>
+</ol>
+<img src="img/user-guide/p11_1.png" alt="Update filter window">
+<p>The <em>Update filter</em> dialog lets you pick a new comparator, preview the possible
+values over the new window, edit values and apply the update. A table variable then
+documents that a filter was updated during the run.</p>
+<img src="img/user-guide/p12_1.png" alt="Preview in update filter">
+
+<h3>Add tags</h3>
+<img src="img/user-guide/p13_1.png" alt="Add tags window" class="legacy">
+<p>Adds new tags to the existing table using the frozen extraction settings. Find tags by
+name/description (your last search is recalled), add or paste them, choose options, and
+optionally adjust filters for this run — same mechanics as the main window.</p>
+
+<h3>Guardband</h3>
+<p>The Guardband script analyzes and compares batches of a parameter over time:
+it sorts by <code>TS_UTC</code>, identifies batches (Lot# / Sublot#), aligns them to the
+smallest batch, transposes them to columns, and computes control limits
+(mean ± 3σ) to build the guardband chart. Guardband tables are saved under
+<code>Documents/Guardband/&lt;server&gt;/&lt;ID&gt;/&lt;parameter&gt;/</code> and can be
+reused as reference for future batches.</p>
+<img src="img/user-guide/p16_1.png" alt="Batch alignment principle">
+<img src="img/user-guide/p17_1.png" alt="Data transformation">
+<img src="img/user-guide/p19_1.png" alt="Guardband setup window">
+<img src="img/user-guide/p21_1.png" alt="Guardband chart">
+<p>In the chart: select the batches displayed, OOC points (outside UCL/LCL) are shown in
+red, and you can open the underlying table and the cleaning log.</p>
+
+<h3>Additional tools</h3>
+<img src="img/user-guide/p23_1.png" alt="Additional tools menu">
+<ul>
+  <li><strong>File info</strong> — add a general comment (saved as a table variable).</li>
+  <li><strong>Annotate data</strong> — comment selected values of a discrete/text tag in
+      a <code>Comment</code> column (first point or all points; add or replace).
+      <img src="img/user-guide/p25_1.png" alt="Annotate data"></li>
+  <li><strong>Summary column</strong> — per-value summary of a discrete/text tag,
+      optionally with the first timestamp of each value.
+      <img src="img/user-guide/p26_1.png" alt="Summary column"></li>
+  <li><strong>Consolidate information</strong> — combine several tags into one new
+      column with a chosen delimiter (optionally a JMP multiple-response column).</li>
+  <li><strong>Color coding</strong> — color rows by a tag's values (color codes or
+      gradients).
+      <img src="img/user-guide/p27_2.png" alt="Color coding"></li>
+  <li><strong>Hide &amp; exclude</strong> — select rows with JMP's selection platform and
+      hide and/or exclude them.
+      <img src="img/user-guide/p28_1.png" alt="Hide and exclude"></li>
+  <li><strong>Decimal places</strong> — set displayed digits per tag.</li>
+  <li><strong>Limit table</strong> — enter LSL/LCL/UCL/USL manually or compute
+      Levey-Jennings limits from selected rows; values are stored in the tags'
+      <em>Spec Limits</em> / <em>Control Limits</em> column properties.
+      <img src="img/user-guide/p29_1.png" alt="Limit table"></li>
+  <li><strong>Control chart</strong> — browse control charts across the continuous tags.</li>
+</ul>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<ul>
+  <li><strong>Every REST request URL is written to the JMP log</strong>
+      (Ctrl+Shift+L / Cmd+Shift+L) — the first thing to check when something fails.</li>
+  <li><em>“No WebAPI URL configured”</em> — the selected server has no REST address; add
+      it in the server list or under <em>Edit server address</em>.</li>
+  <li><em>Login window appears repeatedly</em> — the password is wrong or expired; stored
+      credentials are deleted automatically on failure, re-enter them.</li>
+  <li><em>SSL/certificate error in the log</em> — the server uses a certificate your
+      machine does not trust. Ask IT to install the CA, or (self-signed plant servers
+      only) the administrator can disable verification in the add-in configuration.</li>
+  <li><em>Python setup failed</em> — see the “Python init” line in the log; the add-in
+      needs one-time internet access to install the <code>requests</code> package.</li>
+</ul>
+
+<hr>
+<p class="legacy">Screenshots marked as v2.x show the previous server-details fields
+(Location/Extension/Shortname) which were removed in v3.0. Guide regenerated from the
+v2.0 PDF (2023-11-17) and updated for add-in v3.0 (2026).</p>
+
+</body>
+</html>

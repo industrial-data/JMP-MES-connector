@@ -38,10 +38,11 @@ data as a JMP table.
 Read `include/Ressources/python/mes_connector/README.md` before touching the Python layer —
 it documents the JSL↔Python contracts (column names the GUI depends on).
 
-For deeper background, read the PDFs in `doc/`:
+For deeper background, read the HTML guides in `doc/` (rewritten for v3.0; screenshots
+extracted from the old PDFs live in `doc/img/`):
 
-- `doc/MES Data retrieval - User Guide - OS.pdf` — end-user walkthrough of the UI
-- `doc/MES Data retrieval - Administrator guide - OS.pdf` — setup, drivers, server list administration
+- `doc/MES Data retrieval - User Guide.html` — end-user walkthrough of the UI
+- `doc/MES Data retrieval - Administrator Guide.html` — server list, security, code architecture, deployment
 
 ## Layout
 
