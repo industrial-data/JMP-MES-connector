@@ -66,7 +66,10 @@ EXPR_ADDTAGS_UI = Expr(
 	// Source dependencies files needed
 	lstDependencies = Files In Directory( strPath || "include/", "recursive" );
 	For( i = 1, i <= N Items( lstDependencies ), i++,
-		Include( strPath || "include/" || lstDependencies[i] )
+		// v3.0: include/ also holds the Python package (.py/.md) — only JSL files are includable
+		If( Ends With( Lowercase( lstDependencies[i] ), ".jsl" ),
+			Include( strPath || "include/" || lstDependencies[i] )
+		)
 	);
 	
 	f_Log( "INFO", "Start Add Tags script." );
@@ -80,9 +83,10 @@ EXPR_ADDTAGS_UI = Expr(
 	ServerType = Expr( ServerType );
 	TableIP21 = Expr( TableIP21 );
 	Condition = Expr( Condition );
-	ps_path = Expr( ps_path );
-	ps_hard_code_version = Expr( ps_hard_code_version );
-	SQL_OLEDB_PS = Expr( SQL_OLEDB_PS );
+	// v3.0: REST transport parameters (replace the removed OLEDB/PowerShell ones)
+	WebAPIURL = Expr( WebAPIURL );
+	DAServer = Expr( DAServer );
+	PIAFServer = Expr( PIAFServer );
 	
 	f_Log(
 		"INFO",

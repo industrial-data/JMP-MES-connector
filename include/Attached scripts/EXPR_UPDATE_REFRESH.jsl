@@ -68,7 +68,10 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	// Source dependencies files needed
 	lstDependencies = Files In Directory( strPath || "include/", "recursive" );
 	For( i = 1, i <= N Items( lstDependencies ), i++,
-		Include( strPath || "include/" || lstDependencies[i] )
+		// v3.0: include/ also holds the Python package (.py/.md) — only JSL files are includable
+		If( Ends With( Lowercase( lstDependencies[i] ), ".jsl" ),
+			Include( strPath || "include/" || lstDependencies[i] )
+		)
 	);
 	
 	f_Log( "INFO", "Start Update / Refreshscript." );
@@ -82,9 +85,10 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	NetworkNode = Expr( NetworkNode );
 	ShortName = Expr( ShortName );
 	is_checked = Expr( is_checked );
-	ps_path = Expr( ps_path );
-	ps_hard_code_version = Expr( ps_hard_code_version );
-	SQL_OLEDB_PS = Expr( SQL_OLEDB_PS );
+	// v3.0: REST transport parameters (replace the removed OLEDB/PowerShell ones)
+	WebAPIURL = Expr( WebAPIURL );
+	DAServer = Expr( DAServer );
+	PIAFServer = Expr( PIAFServer );
 
 				
 	f_Log(

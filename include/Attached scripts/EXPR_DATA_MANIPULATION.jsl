@@ -64,7 +64,10 @@ EXPR_DATA_MANIP = Expr(
 	// Source dependencies files needed
 	lstDependencies = Files In Directory( strPath || "include/", "recursive" );
 	For( i = 1, i <= N Items( lstDependencies ), i++,
-		Include( strPath || "include/" || lstDependencies[i] )
+		// v3.0: include/ also holds the Python package (.py/.md) — only JSL files are includable
+		If( Ends With( Lowercase( lstDependencies[i] ), ".jsl" ),
+			Include( strPath || "include/" || lstDependencies[i] )
+		)
 	);
 	
 
