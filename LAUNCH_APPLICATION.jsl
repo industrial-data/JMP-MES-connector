@@ -89,12 +89,20 @@ For( i = 1, i <= N Items( lstDependencies ), i++,
 
 strPathServerlist = "https://raw.githubusercontent.com/industrial-data/JMP-MES-connector/refs/heads/version-3.0/MES_servers_list.xlsx";
 
+/*
+    f_LoadServerList Function
+    Opens a server list Excel (same sheet/columns as MES_servers_list.xlsx),
+    rebuilds AA.ServersInfo, and returns 1 on success. Used at startup and by
+    the "Load server list..." button.
+*/
+f_LoadServerList = Function( {strPathList},
+
 /* Source file with list of servers */
 Try(
 	dt_MES_servers = Eval(
 		Eval Expr(
 			Open(
-				strPathServerlist,
+				strPathList,
 				Worksheets( "MES_servers_list" ),
 				Use for all sheets( 1 ),
 				Concatenate Worksheets( 0 ),
@@ -194,6 +202,20 @@ StrTagName = "";
 StrTagDesc = "";
 
 Close( dt_MES_servers, NoSave );
+
+	1;
+);
+
+/* Startup: use the user's remembered custom list when it still exists,
+   otherwise the default from config. */
+str.PathServerListRecall = str.PathAppState || "serverlist_recall.txt";
+strPathServerlist_user = "";
+Try( Eval( Parse( Load Text File( str.PathServerListRecall ) ) ) );
+If( strPathServerlist_user != "" & Try( File Exists( strPathServerlist_user ), 0 ),
+	strPathServerlist = strPathServerlist_user;
+	Print( "INFO:        Using the user's custom server list - " || strPathServerlist );
+);
+f_LoadServerList( strPathServerlist );
 
 
 // --------------------------------- LIST INITIALIZATION--------------------------------- //
@@ -359,11 +381,24 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										)
 									),
 									Border Box( top( 15 ), Left( 15 ), Bottom( 8 ),
-										Lineup Box( N Col( 3 ),
-											Text Box( "Name data file:" ),
-											Spacer Box( Size( 15, 15 ) ), 
-											/* Name of the output table, containing extracted data */
-											txt_TableName = Text Edit Box( "", <<Set Width( 180 * RatioX ) )
+										/* v-GUI: replaces the unclear "Name data file" box. Loads a
+										   custom server list (same columns as MES_servers_list.xlsx)
+										   and remembers the choice for future sessions. The output
+										   table name now always defaults to <date>_<server>. */
+										bttn_LoadServerList = Button Box( "Load server list...",
+											str.userlist = Pick File( "Select your server list (Excel)", "$DOCUMENTS", {"Excel Files|xlsx", "All Files|*"}, 1, 0 );
+											If( str.userlist != "",
+												If( f_LoadServerList( str.userlist ) == 1,
+													Try( Save Text File( str.PathServerListRecall, "strPathServerlist_user = \!"" || str.userlist || "\!";" ) );
+													lst_MES_servers << Remove All;
+													lst_MES_servers << Append( AA.ServersInfo << Get Keys );
+													lst_MES_servers << Set Selected( 1 );
+													f_UpdateMESInfo();
+													f_Log( "INFO", "Custom server list loaded and remembered - " || str.userlist );
+												,
+													f_DialogWarning( "Could not load the server list (check the columns match MES_servers_list.xlsx)" )
+												)
+											);
 										)
 									)
 								)
@@ -992,7 +1027,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 							Outline Box( "Extraction",
 								V List Box(
 									Lineup Ruler Box(
-										Widths( {120 * RatioX, 200 * RatioY} ),
+										Widths( {170, 210} )  // fixed widths: GUI scaling made Method/Period too narrow,
 										Lineup Box( N Col( 1 ), Spacing( 10 ),
 											Panel Box( "Method",
 												rdbox_Method = Radio Box(
@@ -1483,6 +1518,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 txtbox_ServerExtension = Text Edit Box( "" );
 txtbox_Shortname = Text Edit Box( "" );
 txtbox_DAServer = Text Edit Box( "" );
+txt_TableName = Text Edit Box( "" );   // v-GUI: replaced by the Load-server-list button; output name uses the default
 
 /* Update screen size */
 WinTag << Maximize Window( 1 );
