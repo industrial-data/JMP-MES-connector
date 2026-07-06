@@ -341,13 +341,7 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		Python Send( rest_desc );
 		Python Send( rest_af );
 		Python Send( rest_include_da );
-		dt_rest = f_REST_PyCall( "\[import pandas as _pd
-_parts = []
-if rest_af.strip():
-    _parts.append(mc.search_af_attributes(rest_base, rest_af, rest_name, rest_desc))
-if int(rest_include_da):
-    _parts.append(mc.search_tags('PI', rest_base, rest_da, rest_name, rest_desc))
-rest_df = _pd.concat(_parts, ignore_index=True) if _parts else _pd.DataFrame(columns=['tagnames', 'descriptions', 'units', 'type', 'path'])]\" );
+		dt_rest = f_REST_PyCall( "rest_df = mc.pi_search(rest_base, rest_da, rest_af, rest_name, rest_desc, int(rest_include_da))" );
 	);
 
 	dt_rest << Set Name( "f_REST_FINDTAGS Results" );

@@ -1547,6 +1547,7 @@ PeriodPanel << Visibility( "Visible" );
 txt_sep_edit << Visibility( "Collapse" );
 txt_sep << Visibility( "Collapse" );
 outline_FiltersRegistered << Close( 1 );
+Try( AF_IncludeDATags << Set( 1, 1 ) );  // default ON: show non-AF (DA) tags like v3 did
 
 /* Initialize server selection */
 lst_MES_servers << Append( AA.ServersInfo << get keys ); // Initialize the list box with the list of MES servers found in MES_servers_list.csv

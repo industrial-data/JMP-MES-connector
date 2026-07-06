@@ -72,6 +72,46 @@ def search_af_attributes(base_url: str, af_server: str, name: str = "",
     return _af.search_attributes(base, af_server, name, description)
 
 
+def pi_search(base_url: str, da_server: str, af_server: str = "",
+              name: str = "", description: str = "",
+              include_da: int = 1) -> pd.DataFrame:
+    """Combined PI search: AF attributes (when an AF server is configured)
+    plus/or plain DA points.
+
+    GRACEFUL DEGRADATION (v4.0.1): an AF failure (wrong AF server name, no AF
+    deployed, blocked endpoints) must not kill the search — it is logged with
+    the reason and the DA point search still runs, so the add-in behaves at
+    least as well as v3. Only when every applicable search fails does the
+    error propagate.
+    """
+    parts: list[pd.DataFrame] = []
+    af_error = None
+    if (af_server or "").strip():
+        try:
+            parts.append(_af.search_attributes(
+                normalize_base_url("PI", base_url), af_server, name, description))
+        except AuthRequired:
+            raise                     # credentials issue: the dialog must handle it
+        except Exception as ex:       # noqa: BLE001 - degrade, don't die
+            af_error = ex
+            print(f"[search] AF attribute search failed ({ex}) - falling back "
+                  "to the plain DA point search. Check the PI_AF_Server value "
+                  "in the server list if AF results were expected.", flush=True)
+    if int(include_da) or af_error is not None or not (af_server or "").strip():
+        try:
+            parts.append(_pi.search_tags(
+                normalize_base_url("PI", base_url), da_server, name, description))
+        except Exception:
+            if not parts:             # nothing else succeeded: surface it
+                raise
+    if not parts:
+        return pd.DataFrame(columns=["tagnames", "descriptions", "units", "type", "path"])
+    out = pd.concat(parts, ignore_index=True)
+    if "path" not in out.columns:
+        out["path"] = ""
+    return out
+
+
 def pi_tag_or_attribute_type(base_url: str, da_server: str, name_or_path: str) -> str:
     """Value type for a DA point or an AF attribute path (leading '\\\\')."""
     base = normalize_base_url("PI", base_url)
