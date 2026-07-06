@@ -316,7 +316,7 @@ def _log_auth_failure(host: str, base: str, tried: list[str]) -> None:
     ntlm_available = _ntlm_auth("probe", "probe") is not None
     print(
         "[auth] ============================================================\n"
-        f"[auth] Authentication to '{host}' FAILED. Mechanisms tried: {', '.join(tried) or 'none available'}.\n"
+        f"[auth] Authentication to '{host}' FAILED. Mechanisms tried on the real request: {', '.join(tried) or 'none available'}.\n"
         f"[auth]  - Kerberos/Negotiate library: "
         f"{'installed' if kerb is not None else 'MISSING (' + _sso_library_name() + ')'}"
         f" | NTLM library: {'installed' if ntlm_available else 'MISSING (requests-ntlm)'}\n"
@@ -333,39 +333,63 @@ def _log_auth_failure(host: str, base: str, tried: list[str]) -> None:
     )
 
 
-def _decide_auth(base: str, host: str, scheme: str, verify):
-    """Probe /system/versions with each mechanism; first non-401 wins.
+def _as_auth_callable(auth_obj):
+    """requests auth objects are callables on PreparedRequest; wrap tuples."""
+    if isinstance(auth_obj, tuple):
+        from requests.auth import HTTPBasicAuth
+        return HTTPBasicAuth(*auth_obj)
+    return auth_obj
 
-    Returns the winning auth object. Raises AuthRequired when all fail.
+
+def _retry_with_mechanisms(resp: requests.Response) -> requests.Response | None:
+    """Replay the EXACT failing request with each candidate mechanism.
+
+    This is the core of the strategy: mechanisms are validated against the
+    real endpoint that rejected us — never against a probe endpoint, which
+    on PI Web API can answer anonymously and validate nothing. The first
+    mechanism that gets a non-401 is cached for the host and its response is
+    returned so the caller continues transparently.
     """
+    parsed = urlparse(resp.url)
+    host = parsed.hostname or resp.url
     tried: list[str] = []
-    for label, auth_obj in _candidates(host, scheme):
+
+    for label, auth_obj in _candidates(host, parsed.scheme):
+        new_req = resp.request.copy()
+        new_req.headers.pop("Authorization", None)   # let the mechanism re-sign
         try:
-            r = requests.get(f"{base}/system/versions", auth=auth_obj,
-                             verify=verify, timeout=20, allow_redirects=True)
-        except Exception as ex:  # network-level failure: not an auth problem
-            raise RuntimeError(f"Cannot reach {base}/system/versions: {ex}") from ex
-        print(f"[auth] Probe GET {base}/system/versions [{label}] -> {r.status_code}", flush=True)
-        if r.status_code != 401:
+            prepared = _as_auth_callable(auth_obj)(new_req)
+            with requests.Session() as s2:
+                s2.verify = VERIFY_TLS
+                r2 = s2.send(prepared, timeout=300, allow_redirects=True)
+        except Exception as ex:
+            print(f"[auth] Retry [{label}] failed to send: {ex}", flush=True)
+            tried.append(label)
+            continue
+        print(f"[auth] Retry {new_req.method} {new_req.url} [{label}] -> {r2.status_code}", flush=True)
+        if r2.status_code != 401:
+            _host_auth[host] = auth_obj
+            _bump_generation()   # every thread's next session uses the winner
             print(f"[auth] '{host}': authenticated with {label}"
                   + (" (no password needed)" if label == "kerberos" else ""), flush=True)
-            return auth_obj
+            return r2
         tried.append(label)
 
-    # Every mechanism got 401. Stale VAULT passwords are deleted; passwords
-    # typed this session are kept (the user will retype in the dialog anyway).
+    # every mechanism failed on the real request
+    base = f"{parsed.scheme}://{host}" + ("/piwebapi" if "piwebapi" in resp.url.lower() else "")
     if host in _persisted_hosts and host not in _dialog_hosts:
-        forget_credentials(host)
+        forget_credentials(host)   # stale vault password
     _log_auth_failure(host, base, tried)
-    raise AuthRequired(host)
+    return None
 
 
 def get_session(server_url: str, verify: bool | None = None) -> requests.Session:
-    """Session for `server_url`, authenticated per the strategy above.
+    """Session for `server_url` with the best-known mechanism attached.
 
-    Cached per host and per thread (bulk extraction uses a thread pool); the
-    cache is invalidated whenever credentials or TLS settings change
-    (_auth_generation), so a login in the main thread reaches worker threads.
+    No probing: the winning mechanism is discovered by check_response() on
+    the first real 401 and cached in _host_auth. Sessions are cached per
+    host and per thread, invalidated by _auth_generation whenever the
+    credentials/TLS/winner change.
     """
     _inject_truststore()
     if verify is None:
@@ -385,36 +409,33 @@ def get_session(server_url: str, verify: bool | None = None) -> requests.Session
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if host in _host_auth:
-        s.auth = _host_auth[host]
-    elif "piwebapi" in server_url.lower():
-        # First contact with a PI host: pick the mechanism with a logged probe
-        s.auth = _decide_auth(server_url.rstrip("/"), host, parsed.scheme, verify)
-        _host_auth[host] = s.auth
+        s.auth = _host_auth[host]                     # known winner
     else:
-        # No cheap probe endpoint (IP21): attach the first available
-        # mechanism; the first real request decides (401 -> check_response).
         cands = _candidates(host, parsed.scheme)
-        s.auth = cands[0][1] if cands else None
+        s.auth = cands[0][1] if cands else None       # best guess; 401 decides
         if cands:
-            print(f"[auth] '{host}': trying {cands[0][0]} (no probe endpoint for this server type).", flush=True)
+            print(f"[auth] '{host}': starting with {cands[0][0]} "
+                  "(a 401 will try the other mechanisms on the same request).", flush=True)
 
     _thread_local.sessions[host] = (_auth_generation, s)
     return s
 
 
 def check_response(resp: requests.Response) -> requests.Response:
-    """raise_for_status, but converts 401 into AuthRequired for the JSL dialog.
+    """Return a successful response, cycling auth mechanisms on 401.
 
-    On 401: log the diagnostic block, clear the cached mechanism and any
-    stale VAULT password (typed passwords are kept until retyped), bump the
-    session generation so all threads rebuild, then raise AuthRequired.
+    IMPORTANT: callers must use the RETURN VALUE (`r = check_response(r)`) —
+    when the first mechanism gets a 401, the request is transparently
+    replayed with the remaining mechanisms and the successful response is
+    the one returned. Only when every mechanism fails on the real request is
+    AuthRequired raised (-> JSL login dialog), with the diagnostic block and
+    test URLs already in the log.
     """
     if resp.status_code == 401:
+        r2 = _retry_with_mechanisms(resp)
+        if r2 is not None:
+            return r2
         host = urlparse(resp.url).hostname or resp.url
-        base = f"{urlparse(resp.url).scheme}://{host}"
-        _log_auth_failure(host, base, ["cached mechanism" if host in _host_auth else "first request"])
-        if host in _persisted_hosts and host not in _dialog_hosts:
-            forget_credentials(host)
         _host_auth.pop(host, None)
         _bump_generation()
         raise AuthRequired(host)

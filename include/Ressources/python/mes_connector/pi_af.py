@@ -48,7 +48,7 @@ def _af_server_webid(base: str, af_server: str) -> str:
     s = get_session(base)
     r = s.get(f"{base}/assetservers", params={"name": af_server}, timeout=60)
     _pi._log_url(r)
-    check_response(r)
+    r = check_response( r )
     body = r.json()
     if "WebId" in body:
         return body["WebId"]
@@ -63,7 +63,7 @@ def _databases(base: str, af_webid: str) -> list[dict]:
     r = s.get(f"{base}/assetservers/{af_webid}/assetdatabases",
               params={"selectedFields": "Items.WebId;Items.Name;Items.Path"}, timeout=60)
     _pi._log_url(r)
-    check_response(r)
+    r = check_response( r )
     return r.json().get("Items", [])
 
 
@@ -106,7 +106,7 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
             r = s.get(f"{base}/assetdatabases/{db['WebId']}/elementattributes",
                       params=params, timeout=120)
             _pi._log_url(r)
-            check_response(r)
+            r = check_response( r )
             items = r.json().get("Items", [])
             if not items:
                 break
@@ -142,7 +142,7 @@ def attribute_type(base_url: str, attribute_path: str) -> str:
     r = s.get(f"{base}/attributes",
               params={"path": attribute_path, "selectedFields": "Type"}, timeout=60)
     _pi._log_url(r)
-    check_response(r)
+    r = check_response( r )
     return str(r.json().get("Type", ""))
 
 
@@ -182,7 +182,7 @@ def search_event_frames(base_url: str, af_server: str, name_filter: str = "",
         r = s.get(f"{base}/assetdatabases/{db['WebId']}/eventframes",
                   params=params, timeout=120)
         _pi._log_url(r)
-        check_response(r)
+        r = check_response( r )
         rows.extend(r.json().get("Items", []))
 
     if not rows:

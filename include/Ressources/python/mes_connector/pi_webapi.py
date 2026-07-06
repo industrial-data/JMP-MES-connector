@@ -60,7 +60,7 @@ def _dataserver_webid(base: str, da_server: str) -> str:
     s = get_session(base)
     r = s.get(f"{base}/dataservers", params={"name": da_server}, timeout=60)
     _log_url(r)
-    check_response(r)
+    r = check_response( r )
     body = r.json()
     if "WebId" in body:
         return body["WebId"]
@@ -102,7 +102,7 @@ def search_tags(base_url: str, da_server: str, name_filter: str = "",
             params["nameFilter"] = nf
         r = s.get(f"{base}/dataservers/{webid}/points", params=params, timeout=120)
         _log_url(r)
-        check_response(r)
+        r = check_response( r )
         items = r.json().get("Items", [])
         if not items:
             break
@@ -150,7 +150,7 @@ def _point_info(base: str, da_webid: str | None, tag: str) -> dict:
                   params={"path": tag, "selectedFields": "WebId;Name;Type"},
                   timeout=60)
         _log_url(r)
-        check_response(r)
+        r = check_response( r )
         body = r.json()
         if "WebId" not in body:
             raise RuntimeError(f"AF attribute '{tag}' not found on PI server")
@@ -163,7 +163,7 @@ def _point_info(base: str, da_webid: str | None, tag: str) -> dict:
         timeout=60,
     )
     _log_url(r)
-    check_response(r)
+    r = check_response( r )
     items = r.json().get("Items", [])
     if not items:
         raise RuntimeError(f"Tag '{tag}' not found on PI server")
@@ -241,7 +241,7 @@ def _fetch_one(base: str, da_webid: str, tag: str, label: str, method: str,
         time.sleep(PAGING_DELAY_S)
         r = s.get(url, params=params, timeout=300)
         _log_url(r)
-        check_response(r)
+        r = check_response( r )
         body = r.json()
         items = body.get("Items", [])
         if method == "Average":

@@ -86,7 +86,7 @@ def ip21_sql(base_url: str, datasource: str, sql: str) -> pd.DataFrame:
         timeout=HTTP_TIMEOUT_S,
     )
     print(f" -> {r.status_code}", flush=True)
-    check_response(r)
+    r = check_response( r )
     return _json_rows_to_dataframe(r.text)
 
 
