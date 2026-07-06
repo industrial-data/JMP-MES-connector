@@ -168,7 +168,7 @@ def _stream_url_and_params(base: str, webid: str, method: str, start: str, end: 
     if method == "Actual":
         url = f"{base}/streams/{webid}/recorded"
         params["boundaryType"] = "Inside"
-    elif method == "Step Interpolated":
+    elif method in ("Stepped", "Step Interpolated"):
         url = f"{base}/streams/{webid}/recorded"
         params["boundaryType"] = "Outside"
     elif method == "Average":
@@ -276,7 +276,7 @@ def extract(base_url: str, da_server: str, tags: list[str], labels: list[str],
     """
     base = base_url.rstrip("/")
     da_webid = _dataserver_webid(base, da_server)
-    step_grid = _step_grid(start, end, interval_s) if method == "Step Interpolated" else None
+    step_grid = _step_grid(start, end, interval_s) if method in ("Stepped", "Step Interpolated") else None
 
     def _job(i: int) -> tuple[int, pd.DataFrame]:
         last_err = None

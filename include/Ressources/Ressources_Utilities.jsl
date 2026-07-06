@@ -1305,7 +1305,7 @@ f_SetUp4Extraction = Function( {ServerType},
 			,
 		//Interpolated + Step Interpolated (same request; the stepped behavior
 		//is selected via the HISTORY table's STEPPED field, see f_SQL_EXTRACT_TAGS)
-				If( ExtractionMethod == "Interpolated" | ExtractionMethod == "Step Interpolated",
+				If( ExtractionMethod == "Interpolated" | ExtractionMethod == "Stepped" | ExtractionMethod == "Step Interpolated",
 					Request = "6";
 					TableIP21 = "HISTORY(80)";
 					ValueIP21 = "VALUE";

@@ -410,5 +410,9 @@ EXPR_DATA_EXTRACTION = Expr(
 		Open( strWorkflowPath )
 	);
 	
+	/* 3.11 Re-enable the extraction buttons (disabled at 1.1; error paths
+	   re-enable them via f_DialogError -> f_ResetButtons) */
+	f_ResetButtons;
+
 ); // End EXPR_Run_Data_Extration
 

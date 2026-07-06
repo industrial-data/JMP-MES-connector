@@ -871,7 +871,10 @@ WinTag = New Window( "IP21PI Data Retrieval",
 															"Actual",
 																rdbox_Method << Set( 3 );
 																PeriodPanel << Visibility( "Collapse" );,
-															"Step Interpolated",
+															"Stepped",
+																rdbox_Method << Set( 4 );
+																PeriodPanel << Visibility( "Visible" );,
+															"Step Interpolated",   // reports saved by early v3.0 builds
 																rdbox_Method << Set( 4 );
 																PeriodPanel << Visibility( "Visible" );
 														);
@@ -979,7 +982,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										Lineup Box( N Col( 1 ), Spacing( 10 ),
 											Panel Box( "Method",
 												rdbox_Method = Radio Box(
-													{"Interpolated", "Average", "Actual", "Step Interpolated"},
+													{"Interpolated", "Average", "Actual", "Stepped"},
 
 													method_selected = rdbox_Method << Get();
 

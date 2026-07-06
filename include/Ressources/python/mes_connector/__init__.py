@@ -65,7 +65,10 @@ def normalize_base_url(server_type: str, url: str) -> str:
     if not u:
         return u
     if "://" not in u:
-        # PI Web API is HTTPS by default; Aspen's REST dll is usually plain HTTP
+        # No scheme typed: PI Web API defaults to HTTPS, Aspen's REST dll to
+        # plain HTTP. Some servers only answer on the other one — in that case
+        # type the scheme explicitly in the WebAPI URL (http://... or
+        # https://...): a user-provided scheme is ALWAYS kept as-is.
         u = ("https://" if server_type == "PI" else "http://") + u
     low = u.lower()
     if server_type == "PI" and "piwebapi" not in low:
@@ -81,7 +84,7 @@ def test_connection(server_type: str, base_url: str, da_server: str) -> str:
     if server_type == "PI":
         _pi._dataserver_webid(base, da_server)
     else:
-        _ip21.browse(base, da_server, tag_wildcard="*", max_tags=1)
+        _ip21.test_connection_sql(base, da_server)
     return "OK"  # JSL checks for this literal
 
 

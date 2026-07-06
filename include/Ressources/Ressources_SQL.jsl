@@ -171,7 +171,7 @@ f_SQL_EXTRACT_TAGS = Function( {Start, End, Filter, ServerType},
 	   return staircase values (previous value held) instead of linear
 	   interpolation. NOTE: verify against your Aspen version; if the server
 	   rejects the column, its error text appears verbatim in the JMP log. */
-	If( ExtractionMethod == "Step Interpolated",
+	If( ExtractionMethod == "Stepped" | ExtractionMethod == "Step Interpolated",
 		__SQL_EXTRACTION = Substitute( __SQL_EXTRACTION,
 			"WHERE ((REQUEST", "WHERE ((STEPPED = 1) AND (REQUEST" )
 	);

@@ -1,117 +1,152 @@
 # -*- coding: utf-8 -*-
 """
-Aspen InfoPlus.21 access via the Aspen Process Data REST service.
+Aspen InfoPlus.21 access via the Aspen Process Data REST service (SQL mode).
 
-Per `../IP21_REST_API_design.docx`: the REST service can WRAP the add-in's
-existing SQLplus queries — no query rewrite, no ODBC driver install, and it
-benchmarked ~5x faster than ODBC round-tripping. So the JSL side keeps building
-the exact same SQL text as v2.x (search, extraction, filters, preview) and
-simply sends it here instead of through `Create Database Connection`.
+The JSL side keeps building the exact same SQLplus queries as v2.x (search,
+extraction, filters, preview) and sends the SQL TEXT here. This module wraps
+it in Aspen's batch envelope, POSTs it to the /SQL passthrough endpoint, and
+converts the JSON response into a DataFrame.
 
 Base URL (from the WebAPI_URL column of the server list):
-    http://<ip21server.company.com>/ProcessData/AtProcessDataREST.dll
+    http://<ip21-app-server>/ProcessData/AtProcessDataREST.dll
+(some deployments are plain http, others https — the user's scheme is kept;
+a bare host gets http:// by default, see normalize_base_url)
 
-Endpoints used:
-- POST <base>/SQL     : execute a SQLplus query (the wrapper — main path)
-- GET  <base>/Browse  : fast wildcard tag search (used for connection tests;
-                        the GUI search goes through SQL to keep the exact
-                        legacy result shape)
+THE ENVELOPE (validated working pattern — see the repo's IP21 REST notes):
+the /SQL endpoint takes a bracket-delimited BATCH of <SQL> elements, not JSON
+and not our own XML. One statement:
 
-The SQL controller takes an XML envelope; `<SQL>` attributes:
-    t="SQLplus"  query language
-    ds="..."     data source name as registered in ADSA (the DAServer column;
-                 usually the IP21 host name)
-    m="..."      max rows
-    to="..."     timeout in seconds
-    s="1"        stream results
-The response is XML rows: <NewDataSet><Table><col>val</col>...</Table>...
-NOTE: attribute details can vary slightly across Aspen versions — if a POST
-returns HTTP 400, capture the response text (it contains Aspen's error) and
-check the AtProcessDataREST documentation for your version.
+    [<SQL c="DRIVER={AspenTech SQLplus};HOST=localhost;Port=10014;
+            CHARINT=N;CHARFLOAT=N;CHARTIME=N;CONVERTERRORS=N"
+          m="30000" to="90" s="1"><![CDATA[ ...SQL text... ]]></SQL>]
+
+- c  : the ODBC-style connection string used SERVER-SIDE by the REST service
+       to reach its SQLplus engine. HOST=localhost is the standard: the REST
+       dll and the SQLplus engine run on the same box, so the client never
+       names the historian host here. CHARINT/CHARFLOAT/CHARTIME/
+       CONVERTERRORS=N ask for native types instead of everything-as-text.
+- m  : request timeout in milliseconds.
+- to : connect timeout in seconds (headroom above m).
+- s  : sequence number of this statement inside the batch (we send one).
+(m/to/s semantics are inferred from Aspen's bundled samples; confirm against
+ http://<server>/ProcessData/samples/sample_home.html for your version.)
+
+THE RESPONSE is JSON, shaped long: data.rows[] each containing fld[] items
+with {i: column-index, v: value} (and the column definitions under data.cols
+when the server provides them). `_json_rows_to_dataframe` pivots that into
+one row per record with the SELECT's column names — which is what the JSL
+post-processing expects (tagnames/descriptions/... or NAME/TS/TS_UTC/...).
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from xml.sax.saxutils import escape
+import json
 
 import pandas as pd
 
-from .auth import get_session, check_response
+from .auth import check_response, get_session
 
-MAX_ROWS = 1_000_000   # same cap as the v2.x ODBC connection string
-TIMEOUT_S = 300
+REQUEST_TIMEOUT_MS = 30000   # m= : per-request timeout (server side), ms
+CONNECT_TIMEOUT_S = 90       # to=: connect timeout (server side), s
+HTTP_TIMEOUT_S = 300         # our own HTTP client timeout
+
+# Server-side connection string: the REST service talks to the SQLplus engine
+# on ITS OWN host (localhost) — do not put the historian hostname here.
+CONNECTION_STRING = ("DRIVER={AspenTech SQLplus};HOST=localhost;Port=10014;"
+                     "CHARINT=N;CHARFLOAT=N;CHARTIME=N;CONVERTERRORS=N")
+
+
+def _sql_envelope(sql: str) -> str:
+    """Wrap one SQL statement in Aspen's bracketed batch envelope."""
+    return (
+        f'[<SQL c="{CONNECTION_STRING}" m="{REQUEST_TIMEOUT_MS}" '
+        f'to="{CONNECT_TIMEOUT_S}" s="1"><![CDATA[{sql}]]></SQL>]'
+    )
 
 
 def ip21_sql(base_url: str, datasource: str, sql: str) -> pd.DataFrame:
-    """Run a SQLplus query through the REST wrapper; return rows as a DataFrame.
+    """Run a SQLplus query through the REST /SQL passthrough.
 
+    `datasource` is kept for call-site compatibility but is not part of the
+    envelope: the REST service always reaches its local engine (HOST=localhost).
     Column names/order come from the SELECT itself, so results are identical
     to what the ODBC path produced — the JSL post-processing is unchanged.
     """
     base = base_url.rstrip("/")
-    body = (
-        f'<SQL t="SQLplus" ds="{escape(datasource, {chr(34): "&quot;"})}" '
-        f'm="{MAX_ROWS}" to="{TIMEOUT_S}" s="1">'
-        f"<![CDATA[{sql}]]></SQL>"
-    )
+    body = _sql_envelope(sql)
     s = get_session(base)
     # Echo the request in the JMP log (v2.x did the same with its PowerShell commands)
-    print(f"POST {base}/SQL  ds={datasource}  sql={' '.join(sql.split())[:300]}", flush=True)
+    print(f"POST {base}/SQL  sql={' '.join(sql.split())[:300]}", flush=True)
     r = s.post(
         f"{base}/SQL",
         data=body.encode("utf-8"),
-        headers={"Content-Type": "text/xml"},
-        timeout=TIMEOUT_S + 30,
+        # the endpoint expects the envelope as the raw body; the working JSL
+        # reference sent it under an application/json content type
+        headers={"Content-Type": "application/json",
+                 "X-Requested-With": "XMLHttpRequest"},
+        timeout=HTTP_TIMEOUT_S,
     )
     print(f" -> {r.status_code}", flush=True)
     check_response(r)
-    return _xml_rows_to_dataframe(r.text)
+    return _json_rows_to_dataframe(r.text)
 
 
-def browse(base_url: str, datasource: str, tag_wildcard: str = "*",
-           max_tags: int = 100) -> pd.DataFrame:
-    """Fast tag browse (design doc: ~4s for '*' vs ~55s via SQL search).
-
-    Kept mainly as a lightweight connection test; returns whatever columns
-    the server provides for each matched tag.
-    """
-    base = base_url.rstrip("/")
-    s = get_session(base)
-    r = s.get(
-        f"{base}/Browse",
-        params={"dataSource": datasource, "tag": tag_wildcard,
-                "max": max_tags, "getTrendable": 0},
-        timeout=120,
-    )
-    print(f"GET {r.request.url} -> {r.status_code}", flush=True)
-    check_response(r)
-    return _xml_rows_to_dataframe(r.text)
+def test_connection_sql(base_url: str, datasource: str) -> pd.DataFrame:
+    """Cheap round-trip: a search that returns no rows but exercises the
+    full envelope -> SQLplus -> JSON pipeline."""
+    return ip21_sql(base_url, datasource,
+                    "SELECT name as tagnames FROM all_records "
+                    "WHERE name like 'ZZZ_MES_CONNECTOR_PROBE%';")
 
 
-def _xml_rows_to_dataframe(xml_text: str) -> pd.DataFrame:
-    """Parse Aspen's XML row set generically: each repeated leaf-holding
-    element becomes a row, its children become columns."""
-    xml_text = xml_text.strip()
-    if not xml_text:
+def _json_rows_to_dataframe(text: str) -> pd.DataFrame:
+    """Pivot Aspen's long JSON result (rows[].fld[] of {i, v}) into a wide
+    DataFrame with the SELECT's column names."""
+    text = (text or "").strip()
+    if not text:
         return pd.DataFrame()
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as ex:
-        # Aspen (or a proxy) answered with non-XML, e.g. an HTML error page.
-        # Surface the beginning of the payload — it usually names the problem.
+        doc = json.loads(text)
+    except ValueError as ex:
+        # HTML error page, IIS auth page, proxy interception...
         raise RuntimeError(
-            f"IP21 REST returned non-XML ({ex}); response starts with: {xml_text[:300]!r}"
+            f"IP21 REST returned non-JSON ({ex}); response starts with: {text[:300]!r}"
         ) from ex
 
-    # Aspen wraps errors in the payload rather than HTTP status codes
-    for err in root.iter():
-        if err.tag.lower().endswith("error") and (err.text or "").strip():
-            raise RuntimeError(f"IP21 REST error: {err.text.strip()}")
+    data = doc.get("data", doc) if isinstance(doc, dict) else doc
 
-    rows = []
-    for record in root.iter():
-        children = list(record)
-        # a "row" is an element whose children are all leaves with text
-        if children and all(len(c) == 0 for c in children):
-            rows.append({c.tag: (c.text or "").strip() for c in children})
-    return pd.DataFrame(rows)
+    # Aspen reports SQL/engine errors inside the payload, not via HTTP status
+    if isinstance(data, dict):
+        for key in ("er", "err", "error", "Error"):
+            msg = data.get(key)
+            if msg:
+                raise RuntimeError(f"IP21 REST error: {msg}")
+
+    if not isinstance(data, dict):
+        raise RuntimeError(f"IP21 REST: unexpected payload shape: {text[:300]!r}")
+
+    # column index -> column name (from data.cols metadata when present)
+    names: dict[int, str] = {}
+    cols = data.get("cols") or data.get("columns") or []
+    for idx, c in enumerate(cols, start=1):
+        if isinstance(c, dict):
+            names[int(c.get("i", idx))] = str(c.get("n") or c.get("name") or f"col_{idx}")
+
+    records = []
+    for row in data.get("rows", []):
+        flds = row.get("fld", []) if isinstance(row, dict) else []
+        rec = {}
+        for f in flds:
+            i = int(f.get("i", len(rec) + 1))
+            # fld items sometimes carry their own name key; prefer metadata
+            name = names.get(i) or str(f.get("n") or f"col_{i}")
+            rec[name] = f.get("v")
+        if rec:
+            records.append(rec)
+
+    df = pd.DataFrame(records)
+    if not df.empty and all(str(c).startswith("col_") for c in df.columns):
+        # No column metadata anywhere: surface it loudly — the JSL layer needs
+        # the SELECT aliases (tagnames/TS/...) to keep working.
+        print("[ip21] WARNING: response had no column names; got "
+              f"{list(df.columns)} — check the /SQL response shape.", flush=True)
+    return df
