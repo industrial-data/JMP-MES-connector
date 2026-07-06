@@ -1027,7 +1027,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 							Outline Box( "Extraction",
 								V List Box(
 									Lineup Ruler Box(
-										Widths( {170, 210} )  // fixed widths: GUI scaling made Method/Period too narrow,
+										Widths( {170, 210} ), // fixed widths: GUI scaling made Method/Period too narrow
 										Lineup Box( N Col( 1 ), Spacing( 10 ),
 											Panel Box( "Method",
 												rdbox_Method = Radio Box(
