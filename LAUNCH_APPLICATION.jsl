@@ -560,7 +560,8 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										// not in the Asset Framework (plain DA points)
 										Border Box( Left( 26 ),
 											AF_IncludeDATags = Check Box( {"Also show tags not in AF (DA points)"} )
-										),
+										)
+									),
 									V List Box(
 										Border Box( Top( 145 * RatioY ), Right( 10 ), Left( 10 ),
 											bttn_AddTag = Button Box( "", 
@@ -884,7 +885,10 @@ WinTag = New Window( "IP21PI Data Retrieval",
 															"Actual",
 																rdbox_Method << Set( 3 );
 																PeriodPanel << Visibility( "Collapse" );,
-															"Step Interpolated",
+															"Stepped",
+																rdbox_Method << Set( 4 );
+																PeriodPanel << Visibility( "Visible" );,
+															"Step Interpolated",   // reports saved by early v3.0 builds
 																rdbox_Method << Set( 4 );
 																PeriodPanel << Visibility( "Visible" );
 														);
@@ -992,7 +996,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										Lineup Box( N Col( 1 ), Spacing( 10 ),
 											Panel Box( "Method",
 												rdbox_Method = Radio Box(
-													{"Interpolated", "Average", "Actual", "Step Interpolated"},
+													{"Interpolated", "Average", "Actual", "Stepped"},
 
 													method_selected = rdbox_Method << Get();
 
