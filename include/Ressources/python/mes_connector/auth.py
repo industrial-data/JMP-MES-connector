@@ -74,7 +74,7 @@ def configure_tls(verify: bool) -> None:
         print("[auth] WARNING: TLS certificate verification is DISABLED "
               "(int.TLSVerify = 0 in config.jsl).", flush=True)
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    _drop_all_sessions()
+    _bump_generation()
 
 
 def _inject_truststore() -> None:
@@ -140,6 +140,9 @@ def forget_credentials(host_or_url: str) -> None:
     host = urlparse(host_or_url).hostname or host_or_url
     _basic_credentials.pop(host, None)
     _persisted_hosts.discard(host)
+    _dialog_hosts.discard(host)
+    _host_auth.pop(host, None)
+    _bump_generation()
     kr = _keyring()
     if kr is not None:
         try:
@@ -150,7 +153,6 @@ def forget_credentials(host_or_url: str) -> None:
             print(f"[auth] Stored credentials for '{host}' removed from the OS vault.", flush=True)
         except Exception:
             pass
-    _drop_session(host)
 
 
 def set_credentials(host_or_url: str, user: str, password: str,
@@ -162,15 +164,19 @@ def set_credentials(host_or_url: str, user: str, password: str,
     """
     host = urlparse(host_or_url).hostname or host_or_url
     _basic_credentials[host] = (user, password)
+    _dialog_hosts.add(host)          # dialog credentials take priority now
+    _host_auth.pop(host, None)       # re-decide the mechanism with them
     if remember and save_credentials(host, user, password):
         _persisted_hosts.add(host)
-    _drop_session(host)
+    _bump_generation()               # all threads rebuild their sessions
 
 
 def clear_credentials() -> None:
     _basic_credentials.clear()
     _persisted_hosts.clear()
-    _drop_all_sessions()
+    _dialog_hosts.clear()
+    _host_auth.clear()
+    _bump_generation()
 
 
 # ---------------------------------------------------------------------------
@@ -189,26 +195,44 @@ def _drop_all_sessions() -> None:
 # ---------------------------------------------------------------------------
 # Authentication strategy
 # ---------------------------------------------------------------------------
-# The order of attempts, for every host (each stage is logged to the JMP log):
+# For every host, an ordered list of MECHANISMS is tried (each attempt is
+# logged to the JMP log):
 #
-#   Stage 1  KERBEROS / NEGOTIATE (no password): Windows SSPI via
-#            requests-negotiate-sspi, or requests-kerberos elsewhere.
-#            Tried FIRST — most PI Web API deployments accept the logged-in
-#            Windows/AD identity, so the user never types anything.
-#   Stage 2  OS-VAULT CREDENTIALS: username/password remembered earlier in the
-#            Windows Credential Manager / macOS Keychain.
-#   Stage 3  DIALOG CREDENTIALS: whatever the user typed this session.
+#   With credentials typed in the JSL login dialog THIS session (they always
+#   take priority — the previous version kept using Kerberos and never
+#   attached them, which made the dialog appear to "not work"):
+#       1. NTLM with the typed credentials   (works on IIS servers where
+#          Basic auth is disabled — the common PI Web API setup; the password
+#          is never sent in clear, so NTLM is allowed even over http)
+#       2. Basic with the typed credentials  (https only)
+#       3. Kerberos/Negotiate single sign-on
 #
-# For PI Web API hosts, the winning stage is decided ONCE by probing the cheap
-# /system/versions endpoint and cached in _host_stage. Other hosts (IP21) skip
-# the probe: the first real request decides, with the same stage order.
+#   Without dialog credentials:
+#       1. Kerberos/Negotiate single sign-on (no password at all)
+#       2. NTLM with OS-vault credentials
+#       3. Basic with OS-vault credentials   (https only)
 #
-# When every stage fails, check_response() raises AuthRequired (-> JSL login
-# dialog) and the log documents each attempted stage plus test URLs so an
-# administrator can reproduce the failure outside JMP.
+# PI Web API hosts decide the winning mechanism ONCE by probing the cheap
+# /system/versions endpoint; the winning auth object is cached in _host_auth.
+# Other hosts (IP21) attach the first available mechanism and let the first
+# real request decide. Any 401 afterwards clears the caches, logs a
+# diagnostic block with test URLs, and raises AuthRequired (-> JSL dialog).
+#
+# Credential hygiene on failure: vault-stored passwords that fail are deleted
+# (stale); dialog-typed passwords are kept until the user retypes them, so a
+# transient failure does not silently discard what the user just entered.
 
-# host -> ("kerberos" | "basic") once a working strategy is known
-_host_stage: dict[str, str] = {}
+# host -> winning auth object (decided by probe or first success)
+_host_auth: dict[str, object] = {}
+# hosts whose current credentials came from the JSL dialog this session
+_dialog_hosts: set[str] = set()
+# bumped on every credential/TLS change so per-thread session caches rebuild
+_auth_generation = 0
+
+
+def _bump_generation() -> None:
+    global _auth_generation
+    _auth_generation += 1
 
 
 def _kerberos_auth():
@@ -226,92 +250,122 @@ def _kerberos_auth():
         return None
 
 
+def _ntlm_auth(user: str, password: str):
+    """Explicit-credential NTLM (challenge/response — no cleartext password),
+    or None when requests-ntlm is not installed."""
+    try:
+        from requests_ntlm import HttpNtlmAuth
+        return HttpNtlmAuth(user, password)
+    except ImportError:
+        return None
+
+
 def _sso_library_name() -> str:
     return "requests-negotiate-sspi" if sys.platform == "win32" else "requests-kerberos"
 
 
-def _basic_auth_for(host: str, scheme: str):
-    """Stored/typed credentials for host, refusing cleartext transport."""
+def _stored_credentials(host: str):
+    """(user, pwd) from memory or the OS vault, else None."""
     if host not in _basic_credentials:
         saved = load_saved_credentials(host)
         if saved is not None:
             _basic_credentials[host] = saved
             _persisted_hosts.add(host)
             print(f"[auth] Using stored credentials for '{host}' from the OS vault.", flush=True)
-    if host not in _basic_credentials:
-        return None
-    # Compliance: never send a password over an unencrypted channel.
-    if scheme == "http":
-        raise RuntimeError(
-            f"Refusing to send credentials to '{host}' over plain http:// "
-            "(the password would cross the network unencrypted). Use an "
-            "https:// WebAPI URL, or rely on Kerberos SSO (no password on the wire)."
-        )
-    return _basic_credentials[host]
+    return _basic_credentials.get(host)
+
+
+def _candidates(host: str, scheme: str) -> list[tuple[str, object]]:
+    """Ordered (label, auth) mechanisms for this host — see module comment."""
+    out: list[tuple[str, object]] = []
+    creds = _stored_credentials(host)
+
+    def add_cred_mechanisms():
+        if creds is None:
+            return
+        user, pwd = creds
+        ntlm = _ntlm_auth(user, pwd)
+        if ntlm is not None:
+            out.append(("ntlm", ntlm))
+        else:
+            print("[auth] requests-ntlm not installed - cannot try NTLM with "
+                  "explicit credentials (pip name: requests-ntlm).", flush=True)
+        if scheme == "http":
+            print(f"[auth] Basic auth skipped for '{host}': plain http would "
+                  "send the password unencrypted (NTLM/Kerberos are still tried).", flush=True)
+        else:
+            out.append(("basic", tuple(creds)))
+
+    kerb = _kerberos_auth()
+    if host in _dialog_hosts and creds is not None:
+        add_cred_mechanisms()           # the user just typed these: use them!
+        if kerb is not None:
+            out.append(("kerberos", kerb))
+    else:
+        if kerb is not None:
+            out.append(("kerberos", kerb))
+        else:
+            print(f"[auth] Kerberos SSO unavailable ({_sso_library_name()} not installed).", flush=True)
+        add_cred_mechanisms()
+    return out
 
 
 def _log_auth_failure(host: str, base: str, tried: list[str]) -> None:
     """One readable block in the JMP log explaining WHAT failed and HOW to test."""
     kerb = _kerberos_auth()
+    ntlm_available = _ntlm_auth("probe", "probe") is not None
     print(
         "[auth] ============================================================\n"
-        f"[auth] Authentication to '{host}' FAILED. Stages tried: {', '.join(tried) or 'none'}.\n"
-        f"[auth]  - Kerberos/Negotiate library installed: "
-        f"{'yes' if kerb is not None else 'NO (install ' + _sso_library_name() + ' for password-less SSO)'}\n"
-        f"[auth]  - Test in your browser (should log you in or prompt): {base}/system/versions\n"
-        f"[auth]  - Test Kerberos outside JMP:  curl --negotiate -u : {base}/system/versions\n"
-        f"[auth]  - Test basic credentials:     curl -u USER {base}/system/versions\n"
-        "[auth] If the browser works but JMP does not, the server likely only\n"
-        "[auth] accepts Negotiate/Kerberos - check the SSO library above and the\n"
-        "[auth] server's SPN configuration with the PI administrator.\n"
+        f"[auth] Authentication to '{host}' FAILED. Mechanisms tried: {', '.join(tried) or 'none available'}.\n"
+        f"[auth]  - Kerberos/Negotiate library: "
+        f"{'installed' if kerb is not None else 'MISSING (' + _sso_library_name() + ')'}"
+        f" | NTLM library: {'installed' if ntlm_available else 'MISSING (requests-ntlm)'}\n"
+        f"[auth]  - Test in your browser:              {base}/system/versions\n"
+        f"[auth]  - Test Kerberos SSO outside JMP:     curl --negotiate -u : {base}/system/versions\n"
+        f"[auth]  - Test NTLM with your credentials:   curl --ntlm -u DOMAIN\\\\user {base}/system/versions\n"
+        f"[auth]  - Test Basic with your credentials:  curl -u user {base}/system/versions\n"
+        "[auth] For domain accounts type the user as DOMAIN\\\\user or user@domain.\n"
+        "[auth] If the browser works but every mechanism above fails, ask the PI\n"
+        "[auth] administrator which authentication methods the server allows\n"
+        "[auth] (IIS: Windows Authentication providers / Basic) and check the SPN.\n"
         "[auth] ============================================================",
         flush=True,
     )
 
 
-def _decide_stage(base: str, host: str, scheme: str, verify) -> tuple[str, object]:
-    """Probe /system/versions to pick the first working stage (PI hosts only).
+def _decide_auth(base: str, host: str, scheme: str, verify):
+    """Probe /system/versions with each mechanism; first non-401 wins.
 
-    Returns (stage_name, auth_object). Raises AuthRequired when nothing works.
+    Returns the winning auth object. Raises AuthRequired when all fail.
     """
     tried: list[str] = []
-
-    candidates: list[tuple[str, object]] = []
-    kerb = _kerberos_auth()
-    if kerb is not None:
-        candidates.append(("kerberos", kerb))
-    else:
-        print(f"[auth] Kerberos SSO unavailable ({_sso_library_name()} not installed).", flush=True)
-    basic = _basic_auth_for(host, scheme)
-    if basic is not None:
-        candidates.append(("basic", basic))
-
-    for stage, auth_obj in candidates:
+    for label, auth_obj in _candidates(host, scheme):
         try:
             r = requests.get(f"{base}/system/versions", auth=auth_obj,
                              verify=verify, timeout=20, allow_redirects=True)
         except Exception as ex:  # network-level failure: not an auth problem
             raise RuntimeError(f"Cannot reach {base}/system/versions: {ex}") from ex
-        print(f"[auth] Probe GET {base}/system/versions [{stage}] -> {r.status_code}", flush=True)
+        print(f"[auth] Probe GET {base}/system/versions [{label}] -> {r.status_code}", flush=True)
         if r.status_code != 401:
-            print(f"[auth] '{host}': authenticating with {stage}"
-                  + (" (no password needed)" if stage == "kerberos" else ""), flush=True)
-            return stage, auth_obj
-        tried.append(stage)
-        if stage == "basic":
-            # stored password rejected -> stale: remove it from the vault
-            if host in _persisted_hosts:
-                forget_credentials(host)
-            _basic_credentials.pop(host, None)
+            print(f"[auth] '{host}': authenticated with {label}"
+                  + (" (no password needed)" if label == "kerberos" else ""), flush=True)
+            return auth_obj
+        tried.append(label)
 
+    # Every mechanism got 401. Stale VAULT passwords are deleted; passwords
+    # typed this session are kept (the user will retype in the dialog anyway).
+    if host in _persisted_hosts and host not in _dialog_hosts:
+        forget_credentials(host)
     _log_auth_failure(host, base, tried)
     raise AuthRequired(host)
 
 
 def get_session(server_url: str, verify: bool | None = None) -> requests.Session:
-    """Session for `server_url`, authenticated per the staged strategy above.
+    """Session for `server_url`, authenticated per the strategy above.
 
-    Cached per host and per thread (bulk extraction uses a thread pool).
+    Cached per host and per thread (bulk extraction uses a thread pool); the
+    cache is invalidated whenever credentials or TLS settings change
+    (_auth_generation), so a login in the main thread reaches worker threads.
     """
     _inject_truststore()
     if verify is None:
@@ -321,50 +375,48 @@ def get_session(server_url: str, verify: bool | None = None) -> requests.Session
     host = parsed.hostname or server_url
     if not hasattr(_thread_local, "sessions"):
         _thread_local.sessions = {}
-    if host in _thread_local.sessions:
-        return _thread_local.sessions[host]
+    cached = _thread_local.sessions.get(host)
+    if cached is not None and cached[0] == _auth_generation:
+        return cached[1]
 
     s = requests.Session()
     s.verify = verify
     if not verify:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    is_pi = "piwebapi" in server_url.lower()
-    if is_pi and host not in _host_stage:
-        # First contact with a PI host: decide the strategy once, with an
-        # explicit, logged probe of /system/versions.
-        stage, auth_obj = _decide_stage(server_url.rstrip("/"), host, parsed.scheme, verify)
-        _host_stage[host] = stage
-        s.auth = auth_obj
-    elif _host_stage.get(host) == "basic":
-        s.auth = _basic_auth_for(host, parsed.scheme)
-    elif _host_stage.get(host) == "kerberos":
-        s.auth = _kerberos_auth()
+    if host in _host_auth:
+        s.auth = _host_auth[host]
+    elif "piwebapi" in server_url.lower():
+        # First contact with a PI host: pick the mechanism with a logged probe
+        s.auth = _decide_auth(server_url.rstrip("/"), host, parsed.scheme, verify)
+        _host_auth[host] = s.auth
     else:
-        # No probe (IP21 hosts): same order, decided by the first real
-        # request — Kerberos first (no password), then stored/typed credentials.
-        s.auth = _kerberos_auth() or _basic_auth_for(host, parsed.scheme)
+        # No cheap probe endpoint (IP21): attach the first available
+        # mechanism; the first real request decides (401 -> check_response).
+        cands = _candidates(host, parsed.scheme)
+        s.auth = cands[0][1] if cands else None
+        if cands:
+            print(f"[auth] '{host}': trying {cands[0][0]} (no probe endpoint for this server type).", flush=True)
 
-    _thread_local.sessions[host] = s
+    _thread_local.sessions[host] = (_auth_generation, s)
     return s
 
 
 def check_response(resp: requests.Response) -> requests.Response:
     """raise_for_status, but converts 401 into AuthRequired for the JSL dialog.
 
-    On 401: log a full diagnostic block (stages, test URLs), drop the stale
-    stage cache and any stored password that just failed, then raise
-    AuthRequired so the JSL login dialog can collect fresh credentials.
+    On 401: log the diagnostic block, clear the cached mechanism and any
+    stale VAULT password (typed passwords are kept until retyped), bump the
+    session generation so all threads rebuild, then raise AuthRequired.
     """
     if resp.status_code == 401:
         host = urlparse(resp.url).hostname or resp.url
         base = f"{urlparse(resp.url).scheme}://{host}"
-        _log_auth_failure(host, base, [_host_stage.get(host, "first-request")])
-        if host in _persisted_hosts:
+        _log_auth_failure(host, base, ["cached mechanism" if host in _host_auth else "first request"])
+        if host in _persisted_hosts and host not in _dialog_hosts:
             forget_credentials(host)
-        _basic_credentials.pop(host, None)
-        _host_stage.pop(host, None)
-        _drop_session(host)
+        _host_auth.pop(host, None)
+        _bump_generation()
         raise AuthRequired(host)
     resp.raise_for_status()
     return resp

@@ -114,7 +114,7 @@ try:
     import mes_connector
     mes_connector.configure_tls(bool(^int.TLSVerify^))
     rest_status = "OK " + mes_connector.__version__ + " | python " + sys.version.split()[0] + " | " + _pkg
-    for _opt in ("keyring", "truststore"):
+    for _opt in ("keyring", "truststore", "requests_ntlm"):
         try:
             __import__(_opt)
         except ImportError:
@@ -150,7 +150,7 @@ except Exception as _ex:
 	rest_optdeps = Try( Char( Python Get( rest_optdeps ) ), "" );
 	If( Trim( rest_optdeps ) != "",
 		f_Log( "INFO", "Installing optional python packages: " || rest_optdeps, "REST" );
-		Try( Python Install Packages( "keyring truststore" ) );
+		Try( Python Install Packages( "keyring truststore requests-ntlm" ) );
 	);
 
 	// --- 5) Verify the Python Send/Get mechanism the bridge relies on ---
@@ -171,17 +171,25 @@ except Exception as _ex:
    credential vault (Windows Credential Manager / macOS Keychain) so the
    user never types them again on this machine. */
 f_REST_Login = Function( {rest_host},
+
 	str.vault_name = If( Host is( "Windows" ), "Windows Credential Manager", "macOS Keychain" );
-	// Note: list literals {} are NOT evaluated in JSL — the checkbox label
-	// must be a pre-built string wrapped with Eval List, otherwise the raw
-	// concat expression shows up as the label.
 	str.remember_label = "Remember on this computer (" || str.vault_name || ")";
+
+	// The values are captured in the OK button script (NOT via the modal's
+	// Return Result, which is unreliable for password-style boxes and made
+	// the typed password arrive empty -> the dialog kept re-asking).
+	str.login_user = "";
+	str.login_pwd = "";
+	int.login_remember = 0;
+
 	login_result = New Window( "Server login",
 		<<Modal,
-		<<Return Result,
 		V List Box(
 			Border Box( Left( 10 ), Right( 10 ), Top( 10 ),
-				Text Box( "The server '" || Char( rest_host ) || "' requires a login (SSO not available)." )
+				V List Box(
+					Text Box( "The server '" || Char( rest_host ) || "' requires a login." ),
+					Text Box( "For domain accounts use DOMAIN\!\user or user@domain." )
+				)
 			),
 			Spacer Box( Size( 10, 10 ) ),
 			Border Box( Left( 10 ),
@@ -194,15 +202,19 @@ f_REST_Login = Function( {rest_host},
 				chk_rest_remember = Check Box( Eval List( {str.remember_label} ) )
 			),
 			Spacer Box( Size( 10, 10 ) ),
-			H Center Box( H List Box( Button Box( "OK" ), Button Box( "Cancel" ) ) )
+			H Center Box( H List Box(
+				Button Box( "OK",
+					str.login_user = teb_rest_user << Get Text;
+					str.login_pwd = teb_rest_pwd << Get Text;
+					int.login_remember = Try( chk_rest_remember << Get( 1 ), 0 );
+					If( Is Missing( int.login_remember ), int.login_remember = 0 );
+				),
+				Button Box( "Cancel" )
+			) )
 		)
 	);
 	If( login_result["Button"] == 1,
-		// checkbox state may arrive as a scalar or as a list/matrix of selected items
-		int.remember = Try( (login_result["chk_rest_remember"])[1], Try( Num( login_result["chk_rest_remember"] ), 0 ) );
-		If( Is Missing( int.remember ), int.remember = 0 );
-		Eval List( {login_result["teb_rest_user"], login_result["teb_rest_pwd"], int.remember} );
-	,
+		Eval List( {str.login_user, str.login_pwd, int.login_remember} ),
 		{"", "", 0}
 	);
 );
