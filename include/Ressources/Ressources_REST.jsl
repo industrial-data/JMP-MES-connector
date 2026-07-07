@@ -346,8 +346,13 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		// (and AF_Database when given); AF errors surface to the user instead
 		// of silently degrading to DA points. Unchecked -> plain DA point
 		// search, exactly like v3.
+		// v4.1.3 field mapping in AF mode: 'Attribute (AF)' filters the
+		// attribute name SERVER-SIDE; 'Tagname' matches the underlying PI
+		// point CLIENT-SIDE (parsed from ConfigString - the Web API has no
+		// point filter); 'Description' stays client-side.
 		rest_name = Char( TagName );
 		rest_desc = Char( TagDescription );
+		rest_attr = Try( Char( StrAttrName ), "" );
 		rest_af = Char( PIAFServer );
 		rest_afdb = Char( AFDatabase );
 		rest_af_only = If( Try( int.AFDisplayMode, 0 ) == 1, 1, 0 );
@@ -357,11 +362,12 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		rest_include_da = 1;
 		Python Send( rest_name );
 		Python Send( rest_desc );
+		Python Send( rest_attr );
 		Python Send( rest_af );
 		Python Send( rest_afdb );
 		Python Send( rest_af_only );
 		Python Send( rest_include_da );
-		dt_rest = f_REST_PyCall( "rest_df = mc.pi_search(rest_base, rest_da, rest_af, rest_name, rest_desc, int(rest_include_da), rest_afdb, int(rest_af_only))" );
+		dt_rest = f_REST_PyCall( "rest_df = mc.pi_search(rest_base, rest_da, rest_af, rest_name, rest_desc, int(rest_include_da), rest_afdb, int(rest_af_only), rest_attr)" );
 	);
 
 	dt_rest << Set Name( "f_REST_FINDTAGS Results" );
@@ -510,7 +516,11 @@ f_AF_BuildTreeNodes = Function( {lstPaths, lstLabels, lstData},
 		);
 		leaf = Tree Node( lstLabels[i] );
 		leaf << Set Data( lstData[i] );
-		leaf << Set Tip( lstPaths[i] );   // full AF path on hover
+		// hover: full AF path + the underlying PI point when known
+		// (node data v4.1.3 = {path, pretty, flat, point})
+		leaf_tip = lstPaths[i];
+		Try( If( Char( lstData[i][4] ) != "", leaf_tip = leaf_tip || "\!Ntag: " || Char( lstData[i][4] ) ) );
+		leaf << Set Tip( leaf_tip );
 		If( !Is Empty( parent_node ),
 			parent_node << Append( leaf ),
 			Insert Into( lstRoots, leaf )
@@ -544,10 +554,14 @@ f_AF_CollectLeafData = Function( {node, lstOut},
    rebuilds the tree on EVERY keystroke. Trees therefore start COLLAPSED (the
    user opens what they need); only a small filtered result auto-expands. */
 AF_ExpandMax = 300;
+/* The SEARCH is uncapped (v4.1.3: an unfiltered search indexes everything),
+   but the TREE only renders this many attributes — beyond it the title says
+   "x of y shown" and the filter box is the way to narrow down. */
+AF_DisplayMax = 20000;
 
 /* Rebuild the LEFT tree (search results) applying the search-bar filter to
-   the attribute labels. Elements without any matching attribute disappear
-   (the tree is built only from the matching rows). */
+   the attribute labels AND the underlying PI point names. Elements without
+   any matching attribute disappear (the tree is built only from matches). */
 f_AF_ShowResults = Function( {searchText},
 
 	// Per-keystroke guard: identical filter text (duplicate text-changed
@@ -559,32 +573,45 @@ f_AF_ShowResults = Function( {searchText},
 		keep_paths = {};
 		keep_pretty = {};
 		keep_data = {};
+		n_hits = 0;
+		int.af_filter_on = (Trim( searchText ) != "");
 		For( i = 1, i <= N Items( AF_Res_Paths ), i++,
-			If( Trim( searchText ) == "" | f_MatchSearchPattern( AF_Res_Pretty[i], searchText ),
-				Insert Into( keep_paths, AF_Res_Paths[i] );
-				Insert Into( keep_pretty, AF_Res_Pretty[i] );
-				// NB: Insert Into SPLICES list arguments — wrap the triplet in a
-				// one-element list so it lands as a single nested item
-				Insert Into( keep_data, Eval List( {Eval List( {AF_Res_Paths[i], AF_Res_Pretty[i], AF_Res_Flat[i]} )} ) );
+			af_pt = Try( Char( AF_Res_Point[i] ), "" );
+			If( !int.af_filter_on
+				| f_MatchSearchPattern( AF_Res_Pretty[i], searchText )
+				| (af_pt != "" & f_MatchSearchPattern( af_pt, searchText )),
+				n_hits++;
+				// display cap: keep counting matches, stop collecting nodes
+				If( n_hits <= AF_DisplayMax,
+					Insert Into( keep_paths, AF_Res_Paths[i] );
+					Insert Into( keep_pretty, AF_Res_Pretty[i] );
+					// NB: Insert Into SPLICES list arguments — wrap the quadruplet
+					// in a one-element list so it lands as a single nested item
+					Insert Into( keep_data, Eval List( {Eval List( {AF_Res_Paths[i], AF_Res_Pretty[i], AF_Res_Flat[i], af_pt} )} ) );
+				);
 			)
 		);
-		n_hits = N Items( keep_paths );
 
 		Try( tree_af << Delete Box );
-		If( n_hits > 0,
+		If( N Items( keep_paths ) > 0,
 			{lstRoots, aa_nodes} = f_AF_BuildTreeNodes( keep_paths, keep_pretty, keep_data );
 			afTreeHolder << Append( tree_af = Tree Box( lstRoots, Size( 550 * RatioX, 272 * RatioY ) ) );
 			tree_af << Set Multiselect( 1 );
 			// Collapsed by default. A small ACTIVE filter result is the
 			// exception: the user is hunting for those hits, show them.
-			If( Trim( searchText ) != "" & n_hits <= AF_ExpandMax,
+			If( int.af_filter_on & n_hits <= AF_ExpandMax,
 				aa_keys = aa_nodes << Get Keys;
 				For( k = 1, k <= N Items( aa_keys ), k++,
 					Try( tree_af << Expand( aa_nodes[aa_keys[k]] ) )
 				);
 			);
 		);
-		afTreeOutline << Set Title( "Attribute hierarchy (" || Char( n_hits ) || " attributes)" );
+		afTreeOutline << Set Title(
+			If( n_hits > AF_DisplayMax,
+				"Attribute hierarchy (first " || Char( AF_DisplayMax ) || " of " || Char( n_hits ) || " shown - use the filter)",
+				"Attribute hierarchy (" || Char( n_hits ) || " attributes)"
+			)
+		);
 		afTreeOutline << Close( 0 );
 		Try( txtbox_nbTags << Set Text( " [ " || Char( n_hits ) || " ] >>> " ) );
 	);
@@ -614,7 +641,7 @@ f_AF_ShowSelection = Function( {},
 		sel_data = {};
 		For( i = 1, i <= N Items( sel_paths ), i++,
 			// wrapped: Insert Into splices bare lists (see f_AF_ShowResults)
-			Insert Into( sel_data, Eval List( {Eval List( {sel_paths[i], sel_pretty[i], sel_flat[i]} )} ) )
+			Insert Into( sel_data, Eval List( {Eval List( {sel_paths[i], sel_pretty[i], sel_flat[i], Try( Char( AA.AF_PointByFlat[sel_flat[i]] ), "" )} )} ) )
 		);
 
 		Try( tree_sel << Delete Box );

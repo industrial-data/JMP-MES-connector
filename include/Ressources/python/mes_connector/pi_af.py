@@ -139,10 +139,38 @@ SEARCH_PAGE = 1000        # items per paged request
 SEARCH_WORKERS = 5        # parallel requests — same pool size as the
                           # extraction workers (do not raise without notifying
                           # the PI administrator)
-MAX_SEARCH_RESULTS = 10000  # attribute cap: the GUI tree renders this in ~0.5s;
-                            # more is unusable anyway — refine the filter
-MAX_SEARCH_ELEMENTS = 20000  # hierarchy-size cap (elements per database)
+MAX_SEARCH_RESULTS = 0    # 0 = UNLIMITED (v4.1.3): an unfiltered AF search
+                          # must index EVERYTHING — the JSL side caps only the
+                          # DISPLAY (AF_DisplayMax), never the data
+MAX_SEARCH_ELEMENTS = 100000  # hierarchy-size guard (elements per database)
 PROGRESS_EVERY = 250      # elements between progress prints to the JMP log
+
+
+def _wild_match(text: str, pattern: str) -> bool:
+    """Case-insensitive wildcard match, same semantics as the JSL search bar:
+    spaces and '*' both split the pattern into tokens that must appear in the
+    text IN ORDER ("tic 34" == "tic*34" == *tic*34*). Empty pattern matches."""
+    tokens = [t for t in (pattern or "").lower().replace("*", " ").split() if t]
+    hay = (text or "").lower()
+    pos = 0
+    for tok in tokens:
+        hit = hay.find(tok, pos)
+        if hit < 0:
+            return False
+        pos = hit + len(tok)
+    return True
+
+
+def _point_from_config(config: str, plugin: str) -> str:
+    r"""Underlying PI point (tag) name of an attribute, from its data
+    reference. `\\PIDA1\tic_abc3421;ReadOnly=1` -> `tic_abc3421`. Empty for
+    non-PI-Point references (formulas, constants, table lookups...)."""
+    if plugin and "pi point" not in str(plugin).lower():
+        return ""
+    cfg = str(config or "").split(";")[0].strip()
+    if not cfg:
+        return ""
+    return cfg.rpartition("\\")[2].strip()
 
 
 def _list_elements(s, base: str, db_webid: str, cap: int) -> list[dict]:
@@ -215,8 +243,12 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
         params = {
             "searchFullHierarchy": "true",   # include nested (child) attributes
             "maxCount": SEARCH_PAGE,
+            # ConfigString + DataReferencePlugIn expose the underlying PI point
+            # (tag) name — there is no server-side filter for it, so the
+            # tagname search is applied client-side on the parsed point name
             "selectedFields": "Items.WebId;Items.Name;Items.Path;Items.Description;"
-                              "Items.DefaultUnitsName;Items.Type",
+                              "Items.DefaultUnitsName;Items.Type;"
+                              "Items.ConfigString;Items.DataReferencePlugIn",
         }
         if nf:
             params["nameFilter"] = nf
@@ -249,19 +281,29 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
 def search_attributes(base_url: str, af_server: str, name_filter: str = "",
                       description_filter: str = "",
                       max_results: int | None = None,
-                      database: str = "") -> pd.DataFrame:
+                      database: str = "",
+                      tag_filter: str = "") -> pd.DataFrame:
     """Search attributes across the AF server's databases.
 
-    v4.1: `database` (server list AF_Database field) restricts the search to
-    one database — recommended, since AF servers commonly host many. Results
-    are capped at MAX_SEARCH_RESULTS (a warning is printed to the JMP log when
-    the cap is hit — refine the name filter or scope the database).
+    Filters (v4.1.3 — matching the GUI's three search fields):
+    - name_filter    -> ATTRIBUTE name, pushed server-side (nameFilter).
+    - tag_filter     -> underlying PI POINT (tag) name. The PI Web API cannot
+      filter by point server-side, so this is applied client-side on the
+      point name parsed from each attribute's ConfigString.
+    - description_filter -> attribute description, client-side.
+    Client-side filters use the same wildcard semantics as the JSL search
+    bars: spaces and '*' are in-order wildcards.
+
+    `database` (server list AF_Database field) restricts the search to one
+    database — recommended, since AF servers commonly host many.
+
+    max_results None/0 = UNLIMITED: an unfiltered search indexes the whole
+    database (the GUI caps only what the tree DISPLAYS).
 
     Returns the GUI contract columns: tagnames / descriptions / units / type /
-    path — where `tagnames` is the FULL attribute path (unique identity used
-    for extraction), `path` the element path, and the short attribute name is
-    derivable from the path tail. Description filtering is applied locally
-    (elementattributes has no description filter parameter).
+    path / pointname — `tagnames` is the FULL attribute path (unique identity
+    used for extraction), `path` the element path, `pointname` the underlying
+    PI tag ('' for formula/constant/table attributes).
     """
     base = base_url.rstrip("/")
     af_webid = _af_server_webid(base, af_server)
@@ -271,7 +313,8 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
     if nf and "*" not in nf and "?" not in nf:
         nf = f"*{nf}*"
 
-    cap = MAX_SEARCH_RESULTS if max_results is None else int(max_results)
+    cap = int(max_results) if max_results else 10 ** 9  # 0/None = unlimited
+    t_total = time.monotonic()
     rows: list[dict] = []
     for db in _databases(base, af_webid, database):
         t0 = time.monotonic()
@@ -280,13 +323,15 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
         print(f"[af-search] {db.get('Name', '?')}: {len(db_rows)} attributes "
               f"in {time.monotonic() - t0:.1f}s", flush=True)
         if len(rows) >= cap:
-            print(f"[af-search] RESULT CAP REACHED ({cap} attributes) - the list "
-                  "is truncated. Refine the tag name filter, or set AF_Database "
-                  "in the server list to scope the search.", flush=True)
+            print(f"[af-search] result cap reached ({cap} attributes) - the "
+                  "list is truncated.", flush=True)
             break
+    print(f"[af-search] TOTAL: {len(rows)} attributes "
+          f"in {time.monotonic() - t_total:.1f}s", flush=True)
 
+    empty_cols = ["tagnames", "descriptions", "units", "type", "path", "pointname"]
     if not rows:
-        return pd.DataFrame(columns=["tagnames", "descriptions", "units", "type", "path"])
+        return pd.DataFrame(columns=empty_cols)
 
     df = pd.DataFrame(rows)
     for src, dst in [("Path", "tagnames"), ("Description", "descriptions"),
@@ -295,13 +340,23 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
         df[dst] = df[dst].fillna("")
     # element path (everything before the |attribute part)
     df["path"] = df["tagnames"].str.split("|").str[0]
+    # underlying PI point (tag) name, parsed from the data reference
+    cfg = df.get("ConfigString", pd.Series("", index=df.index)).fillna("")
+    plugin = df.get("DataReferencePlugIn", pd.Series("", index=df.index)).fillna("")
+    df["pointname"] = [_point_from_config(c, p) for c, p in zip(cfg, plugin)]
 
-    d = (description_filter or "").strip().strip("*")
+    d = (description_filter or "").strip()
     if d:
-        df = df[df["descriptions"].str.contains(d, case=False, na=False, regex=False)]
+        df = df[df["descriptions"].map(lambda x: _wild_match(x, d))]
+    tg = (tag_filter or "").strip()
+    if tg:
+        df = df[df["pointname"].map(lambda x: _wild_match(x, tg))]
+        print(f"[af-search] tagname filter '{tg}': {len(df)} attributes match "
+              "an underlying PI point (client-side - the Web API cannot filter "
+              "by point)", flush=True)
 
     df = df.drop_duplicates(subset="tagnames")
-    return df[["tagnames", "descriptions", "units", "type", "path"]].reset_index(drop=True)
+    return df[empty_cols].reset_index(drop=True)
 
 
 def attribute_type(base_url: str, attribute_path: str) -> str:

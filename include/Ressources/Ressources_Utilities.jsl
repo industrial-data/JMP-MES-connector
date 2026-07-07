@@ -3327,9 +3327,13 @@ f_button.find_tags = Function( {},
 
 	StrTagName = txtbox_TagName << Get Text;
 	StrTagDesc = txtbox_TagDesc << Get Text;
-	
+	StrAttrName = Try( txtbox_AttrName << Get Text, "" );  // v4.1.3: AF attribute name (server-side filter)
+
 	f_Log( "INFO", "Tag name - " || StrTagName, section );
 	f_Log( "INFO", "Tag description - " || StrTagDesc, section );
+	If( Trim( Char( StrAttrName ) ) != "",
+		f_Log( "INFO", "Attribute name (AF) - " || StrAttrName, section )
+	);
 	
 	
 /* 1.2. Extraction information */
@@ -3371,11 +3375,13 @@ f_button.find_tags = Function( {},
 	AF_Res_Paths = {};
 	AF_Res_Pretty = {};
 	AF_Res_Flat = {};
+	AF_Res_Point = {};   // v4.1.3: underlying PI point (tag) per attribute
 	lst_af_tn = Column( dt_TagTable, "tagnames" ) << Get Values;
 	lst_af_ds = Column( dt_TagTable, "descriptions" ) << Get Values;
 	lst_af_un = Column( dt_TagTable, "units" ) << Get Values;
 	lst_af_ty = Column( dt_TagTable, "type" ) << Get Values;
 	lst_af_fl = Column( dt_TagTable, "tag_desc_units" ) << Get Values;
+	lst_af_pt = Try( Column( dt_TagTable, "pointname" ) << Get Values, {} );
 	For( i_af = 1, i_af <= N Items( lst_af_tn ), i_af++,
 		If( Contains( Char( lst_af_tn[i_af] ), "|" ),
 			Insert Into( AF_Res_Paths, lst_af_tn[i_af] );
@@ -3383,6 +3389,7 @@ f_button.find_tags = Function( {},
 				Word( -1, lst_af_tn[i_af], "|" ) || " {" || Char( lst_af_ds[i_af] ) || "} [" || Char( lst_af_un[i_af] ) || "] {" || Char( lst_af_ty[i_af] ) || "}"
 			);
 			Insert Into( AF_Res_Flat, lst_af_fl[i_af] );
+			Insert Into( AF_Res_Point, Try( Char( lst_af_pt[i_af] ), "" ) );
 		)
 	);
 	// Render the results tree. New search results MUST render even when the

@@ -245,6 +245,7 @@ TagSelect_AA = Associative Array();
 // Initialize the associative array with all filters (empty for the moment because there is no filters)
 Filters_AA = Associative Array(); //[KEY: ID, corresponds to the order of appearance in the list of filters] [VALUE: 1- Tagname with unit/descr (str) / 2- Tag Type (str) / 3- Filters (list of list)]
 AA.AF_PrettyByFlat = Associative Array(); // v4.1: flat (path-suffixed) label -> pretty tree label for selected AF attributes
+AA.AF_PointByFlat = Associative Array();  // v4.1.3: flat label -> underlying PI point (tag) name
 TagType_AA = Associative Array(); //[KEY:Tagname with unit/descr (str)] [VALUE: 1- Tag Type (str) ]
 NextID = 1;
 
@@ -481,10 +482,12 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										Lineup Ruler Box(
 											Widths( {120 * RatioX, 200 * RatioY} ),
 											Lineup Box( N Col( 2 ), spacing( 10 ),
-												Text Box( "Tagname:" ),
+												Text Box( "Tagname:", <<Set Tip( "In AF mode this matches the underlying PI point (tag) of each attribute - applied after the search (the Web API cannot filter by point)" ) ),
 												txtbox_TagName = Text Edit Box( "" ),
 												Text Box( "Description:" ),
-												txtbox_TagDesc = Text Edit Box( "" )
+												txtbox_TagDesc = Text Edit Box( "" ),
+												Text Box( "Attribute (AF):", <<Set Tip( "AF attribute name - filtered on the server. Only used when 'PI AF search' is checked" ) ),
+												txtbox_AttrName = Text Edit Box( "" )
 											)
 										),
 										/* v4.1: explicit AF mode — checked, the search returns ONLY
@@ -690,6 +693,8 @@ WinTag = New Window( "IP21PI Data Retrieval",
 														If( !(TagSelect_AA << Contains( af_flat )),
 															TagSelect_AA[af_flat] = lst_af_triplets[k_af][1];
 															AA.AF_PrettyByFlat[af_flat] = lst_af_triplets[k_af][2];
+															// v4.1.3: node data carries the underlying PI point as 4th item
+															Try( AA.AF_PointByFlat[af_flat] = Char( lst_af_triplets[k_af][4] ) );
 															lstbox_SelectedTags << Append( Eval List( {af_flat} ) );
 															lstbox_SelectedTags2 << Append( Eval List( {af_flat} ) );
 														)

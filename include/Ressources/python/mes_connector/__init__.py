@@ -64,14 +64,17 @@ __version__ = "4.1.0"
 # v4.0 — PI Asset Framework (see pi_af.py for the endpoint documentation)
 # ---------------------------------------------------------------------------
 def search_af_attributes(base_url: str, af_server: str, name: str = "",
-                         description: str = "", database: str = "") -> pd.DataFrame:
+                         description: str = "", database: str = "",
+                         tag: str = "") -> pd.DataFrame:
     """AF attribute search. Columns: tagnames (= full attribute path — the
-    extraction identity), descriptions, units, type, path (element path).
-    v4.1: `database` restricts the search to one AF database (AF_Database
+    extraction identity), descriptions, units, type, path (element path),
+    pointname (underlying PI tag). `name` filters the ATTRIBUTE name
+    server-side; `tag` filters the underlying PI point client-side;
+    `database` restricts the search to one AF database (AF_Database
     server-list field). The JSL side renders `path` as an element tree."""
     base = normalize_base_url("PI", base_url)
     return _af.search_attributes(base, af_server, name, description,
-                                 database=database)
+                                 database=database, tag_filter=tag)
 
 
 def pi_discover(base_url: str) -> pd.DataFrame:
@@ -86,7 +89,7 @@ def pi_discover(base_url: str) -> pd.DataFrame:
 def pi_search(base_url: str, da_server: str, af_server: str = "",
               name: str = "", description: str = "",
               include_da: int = 1, af_database: str = "",
-              af_only: int = 0) -> pd.DataFrame:
+              af_only: int = 0, attribute: str = "") -> pd.DataFrame:
     """Combined PI search: AF attributes and/or plain DA points.
 
     v4.1 — two explicit modes driven by the GUI's "PI AF search" checkbox:
@@ -94,11 +97,14 @@ def pi_search(base_url: str, da_server: str, af_server: str = "",
       `af_database` when given) and FAILS LOUDLY — no silent degradation to
       DA points, because the user explicitly asked for attributes and needs
       to see why the AF search failed (wrong server name, blocked endpoint,
-      missing database...).
-    - af_only=0: plain DA point search, exactly like v3. The v4.0 behavior
-      (AF automatically searched when configured, degrade to DA on failure)
-      is kept only when include_da=1 AND an AF server is configured, for
-      backward compatibility with recalled reports.
+      missing database...). Field mapping (v4.1.3): `attribute` filters the
+      attribute NAME (server-side); `name` filters the underlying PI POINT
+      name (client-side — the API has no point filter); `description`
+      filters the attribute description (client-side).
+    - af_only=0: plain DA point search, exactly like v3 (`name` = tag name,
+      `attribute` ignored). The v4.0 behavior (AF automatically searched when
+      configured, degrade to DA on failure) is kept only when include_da=1
+      AND an AF server is configured, for backward compat with old reports.
     """
     if int(af_only):
         if not (af_server or "").strip():
@@ -106,8 +112,8 @@ def pi_search(base_url: str, da_server: str, af_server: str = "",
                 "PI AF search requested but no PI_AF_Server is configured for "
                 "this server (set it in the server list or 'Edit server address').")
         return _af.search_attributes(
-            normalize_base_url("PI", base_url), af_server, name, description,
-            database=af_database)
+            normalize_base_url("PI", base_url), af_server, attribute, description,
+            database=af_database, tag_filter=name)
 
     parts: list[pd.DataFrame] = []
     af_error = None
@@ -133,10 +139,17 @@ def pi_search(base_url: str, da_server: str, af_server: str = "",
             if not parts:             # nothing else succeeded: surface it
                 raise
     if not parts:
-        return pd.DataFrame(columns=["tagnames", "descriptions", "units", "type", "path"])
+        return pd.DataFrame(columns=["tagnames", "descriptions", "units", "type",
+                                     "path", "pointname"])
     out = pd.concat(parts, ignore_index=True)
     if "path" not in out.columns:
         out["path"] = ""
+    # DA points ARE their own point: fill pointname so the GUI/metadata can
+    # rely on the column existing for every row
+    if "pointname" not in out.columns:
+        out["pointname"] = out["tagnames"]
+    else:
+        out["pointname"] = out["pointname"].fillna(out["tagnames"])
     return out
 
 

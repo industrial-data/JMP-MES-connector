@@ -87,15 +87,25 @@ v3. The search runs against `/assetdatabases/{id}/elementattributes`
 list provides `AF_Database` (recommended; a typo'd database name raises with
 the list of available ones). The search ENUMERATES ELEMENTS first
 (`/assetdatabases/{id}/elements`, WebId+Path only — no attribute loading) and
-then asks each element for its name-filtered attributes
-(`/elements/{id}/attributes`), fanned out over SEARCH_WORKERS (5) threads.
+then asks each element for its attributes (`/elements/{id}/attributes`),
+fanned out over SEARCH_WORKERS (5) threads.
 Do NOT go back to `/assetdatabases/{id}/elementattributes?searchFullHierarchy`:
 that call walks the whole hierarchy AND loads every attribute per request
-(and per page), which took 15-30 minutes on production databases. Caps:
-MAX_SEARCH_RESULTS (10000 attributes; a JMP 19 Tree Box renders that in
-~0.5 s) and MAX_SEARCH_ELEMENTS (20000) — log warnings tell the user to
-refine the filter / set AF_Database when hit, and progress lines
-(`[af-search] n/m elements scanned...`) land in the JMP log while it runs.
+(and per page), which took 15-30 minutes on production databases.
+
+Three search filters (v4.1.3, matching the GUI fields): **Attribute** ->
+attribute name, pushed server-side (`nameFilter`); **Tagname** -> the
+underlying PI POINT name, applied client-side on the point parsed from each
+attribute's `ConfigString` (the Web API cannot filter by point — attributes
+whose data reference is not a PI Point get pointname "" and never match);
+**Description** -> client-side. Client-side filters use the JSL search-bar
+wildcard semantics (spaces/'*' = in-order wildcards, `_wild_match`).
+Retrieval is UNCAPPED (`max_results=0`): an unfiltered search indexes the
+whole database; only the JSL tree display is capped (`AF_DisplayMax`,
+"first x of y shown"). MAX_SEARCH_ELEMENTS (100000) guards runaway
+hierarchies, and progress lines (`[af-search] n/m elements scanned...`,
+final `TOTAL: n attributes in Xs`) land in the JMP log while it runs.
+The DataFrame gains a `pointname` column (DA rows: pointname = tagname).
 Results are identified by the full AF path
 (`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders them as an
 element-hierarchy Tree Box (root = database) labeled

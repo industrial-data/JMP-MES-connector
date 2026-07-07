@@ -288,6 +288,12 @@ EXPR_DATA_EXTRACTION = Expr(
 				Column( tblAllTags, TagWithDesc ) << Set Property( "tag_attribute", Word( -1, str.identity_i, "|" ) );
 				Column( tblAllTags, TagWithDesc ) << Set Property( "af_element", Word( 1, str.identity_i, "|" ) );
 				Column( tblAllTags, TagWithDesc ) << Set Property( "af_path", str.identity_i );
+				// v4.1.3: underlying PI point (tag), captured at search time
+				Try(
+					If( Char( AA.AF_PointByFlat[TagWithDesc] ) != "",
+						Column( tblAllTags, TagWithDesc ) << Set Property( "pi_point", Char( AA.AF_PointByFlat[TagWithDesc] ) )
+					)
+				);
 			,
 				If( Try( int.StackAssets, 0 ) == 1 & ServerType == "PI",
 					Column( tblAllTags, TagWithDesc ) << Set Property( "tag_attribute", TagWithDesc )
