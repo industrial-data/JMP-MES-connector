@@ -12,13 +12,18 @@ Base URL (from the WebAPI_URL column of the server list):
 (some deployments are plain http, others https — the user's scheme is kept;
 a bare host gets http:// by default, see normalize_base_url)
 
-THE ENVELOPE (validated working pattern — see the repo's IP21 REST notes):
-the /SQL endpoint takes a bracket-delimited BATCH of <SQL> elements, not JSON
-and not our own XML. One statement:
+THE ENVELOPE (validated against a live server): the /SQL endpoint takes ONE
+plain <SQL> XML element as the request body — nothing around it:
 
-    [<SQL c="DRIVER={AspenTech SQLplus};HOST=localhost;Port=10014;
+    <SQL c="DRIVER={AspenTech SQLplus};HOST=localhost;Port=10014;
             CHARINT=N;CHARFLOAT=N;CHARTIME=N;CONVERTERRORS=N"
-          m="30000" to="90" s="1"><![CDATA[ ...SQL text... ]]></SQL>]
+         m="30000" to="90" s="1"><![CDATA[ ...SQL text... ]]></SQL>
+
+CAUTION — do not add square brackets around it. The JSL reference script
+looks like it sends [<SQL ...>] but that is an illusion: in JSL, "\[ ... ]\"
+inside a double-quoted string is the RAW-STRING ESCAPE SYNTAX (the brackets
+are string delimiters, not content). Sending a leading '[' makes the
+server-side XmlLite parser fail with 200 + 'XML Error( Read ) WC_E_SYNTAX'.
 
 - c  : the ODBC-style connection string used SERVER-SIDE by the REST service
        to reach its SQLplus engine. HOST=localhost is the standard: the REST
@@ -56,10 +61,14 @@ CONNECTION_STRING = ("DRIVER={AspenTech SQLplus};HOST=localhost;Port=10014;"
 
 
 def _sql_envelope(sql: str) -> str:
-    """Wrap one SQL statement in Aspen's bracketed batch envelope."""
+    """Wrap one SQL statement in Aspen's <SQL> envelope.
+
+    NO surrounding brackets — see the module docstring: the [ ] seen in the
+    JSL reference are JSL raw-string delimiters, not payload. A leading '['
+    breaks the server's XML parser (200 + 'XML Error( Read ) WC_E_SYNTAX')."""
     return (
-        f'[<SQL c="{CONNECTION_STRING}" m="{REQUEST_TIMEOUT_MS}" '
-        f'to="{CONNECT_TIMEOUT_S}" s="1"><![CDATA[{sql}]]></SQL>]'
+        f'<SQL c="{CONNECTION_STRING}" m="{REQUEST_TIMEOUT_MS}" '
+        f'to="{CONNECT_TIMEOUT_S}" s="1"><![CDATA[{sql}]]></SQL>'
     )
 
 
