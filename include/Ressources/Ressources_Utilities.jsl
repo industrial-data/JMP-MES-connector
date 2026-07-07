@@ -2478,8 +2478,10 @@ f_UpdateMESInfo = Function( {},
 	// v3.0 REST fields (empty when the server list has no WebAPI info yet)
 		WebAPIURL = Try( AA.ServersInfo[MES_FullName]["WebAPI_URL"], "" );
 		PIAFServer = Try( AA.ServersInfo[MES_FullName]["PI_AF_Server"], "" );
+		AFDatabase = Try( AA.ServersInfo[MES_FullName]["AF_Database"], "" );  // v4.1
 		If( Is Missing( WebAPIURL ), WebAPIURL = "" );
 		If( Is Missing( PIAFServer ), PIAFServer = "" );
+		If( Is Missing( AFDatabase ), AFDatabase = "" );
 		DAServer = MES;   // DA server / data source = the mandatory server name
 
 	// Update textbox with Server name / REST fields (Extension/Shortname are orphan boxes kept for legacy paths)
@@ -2488,11 +2490,19 @@ f_UpdateMESInfo = Function( {},
 		txtbox_Shortname << Set Text( ShortName );
 		Try( txtbox_WebAPIURL << Set Text( Char( WebAPIURL ) ) );
 		Try( txtbox_PIAFServer << Set Text( Char( PIAFServer ) ) );
-	
+		Try( txtbox_AFDatabase << Set Text( Char( AFDatabase ) ) );
+
 	// UPdate radio box IP21 /PI
 		If( ServerType == "IP21",
 			rdbox_ServerType << set( 1 ),
 			rdbox_ServerType << set( 2 )
+		);
+
+	// v4.1: AF attribute search only makes sense on a PI server with an AF
+	// server configured — otherwise force the checkbox (and the tree UI) off
+		If( ServerType != "PI" | Trim( Char( PIAFServer ) ) == "",
+			Try( chkbox_AFSearch << Set( 1, 0 ) );
+			Try( f_AF_SetMode( 0 ) );
 		);
 		lstFiltersReg = lstFiltersRegistered << Get Items();
 		Try(
@@ -2667,27 +2677,33 @@ f_MatchSearchPattern = Function( {itemText, searchText},
 */
 f_SearchBarTag = Function( {this, searchText},
 
-	Try(
-		item_list = TagList_DescUnit;  // Only possible if the button "Find Tag" was pressed
-		// only attempt to filter if there is any text
-		If( searchText != "",
-		// new list for groups that match searchText
-			filtered_items = {};
-		// Check if each group matches the given text
-			For( i = 1, i <= N Items( item_list ), i++,
-			// Insert to our list if it matches the search pattern (wildcards: space or *)
-				If( f_MatchSearchPattern( item_list[i], searchText ),
-					Insert Into( filtered_items, item_list[i] )
-				)
+	// v4.1: in AF mode the filter rebuilds the attribute TREE instead —
+	// elements whose attributes all fail the pattern disappear with them
+	If( Try( int.AFDisplayMode, 0 ) == 1,
+		Try( f_AF_ShowResults( searchText ) )
+	,
+		Try(
+			item_list = TagList_DescUnit;  // Only possible if the button "Find Tag" was pressed
+			// only attempt to filter if there is any text
+			If( searchText != "",
+			// new list for groups that match searchText
+				filtered_items = {};
+			// Check if each group matches the given text
+				For( i = 1, i <= N Items( item_list ), i++,
+				// Insert to our list if it matches the search pattern (wildcards: space or *)
+					If( f_MatchSearchPattern( item_list[i], searchText ),
+						Insert Into( filtered_items, item_list[i] )
+					)
+				);
+			,
+		// else show all groups
+				filtered_items = item_list
 			);
-		,
-	// else show all groups
-			filtered_items = item_list
-		);
-		lstAvailableTags << Set Items( filtered_items );
-		txtbox_nbTags << Set text( " [ " || Char( N Items( filtered_items ) ) || " ]" );
+			lstAvailableTags << Set Items( filtered_items );
+			txtbox_nbTags << Set text( " [ " || Char( N Items( filtered_items ) ) || " ]" );
 
 
+		)
 	)
 );		// end filter_items function
 
@@ -3348,8 +3364,29 @@ f_button.find_tags = Function( {},
 		)
 	);
 
-	// v4.0: render the AF results as a collapsible element hierarchy
-	Try( f_AF_FillTree( dt_TagTable ) );
+	// v4.1: collect the AF rows (identity contains '|') for the tree UI.
+	// Pretty label: attribute name {description} [units] {type}; the flat
+	// tag_desc_units label (with the full path) stays the unique identity
+	// used by the selection/extraction data model.
+	AF_Res_Paths = {};
+	AF_Res_Pretty = {};
+	AF_Res_Flat = {};
+	lst_af_tn = Column( dt_TagTable, "tagnames" ) << Get Values;
+	lst_af_ds = Column( dt_TagTable, "descriptions" ) << Get Values;
+	lst_af_un = Column( dt_TagTable, "units" ) << Get Values;
+	lst_af_ty = Column( dt_TagTable, "type" ) << Get Values;
+	lst_af_fl = Column( dt_TagTable, "tag_desc_units" ) << Get Values;
+	For( i_af = 1, i_af <= N Items( lst_af_tn ), i_af++,
+		If( Contains( Char( lst_af_tn[i_af] ), "|" ),
+			Insert Into( AF_Res_Paths, lst_af_tn[i_af] );
+			Insert Into( AF_Res_Pretty,
+				Word( -1, lst_af_tn[i_af], "|" ) || " {" || Char( lst_af_ds[i_af] ) || "} [" || Char( lst_af_un[i_af] ) || "] {" || Char( lst_af_ty[i_af] ) || "}"
+			);
+			Insert Into( AF_Res_Flat, lst_af_fl[i_af] );
+		)
+	);
+	// Render the results tree (clears the search-bar filter view)
+	Try( f_AF_ShowResults( Try( txt_SearchBarTag << Get Text, "" ) ) );
 
 
 /* 2.2. Update list of available tags */

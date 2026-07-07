@@ -38,7 +38,9 @@ REST_PY_INITIALIZED = 0;
 If( Is Empty( WebAPIURL ), WebAPIURL = "" );
 If( Is Empty( DAServer ), DAServer = "" );        // = the mandatory "server" field (PI DA / IP21 data source)
 If( Is Empty( PIAFServer ), PIAFServer = "" );    // optional, PI only — enables the v4.0 AF attribute search
+If( Is Empty( AFDatabase ), AFDatabase = "" );    // v4.1: restrict the AF search to ONE database (AF servers host many)
 If( Is Empty( EFWindows_JSON ), EFWindows_JSON = "" );  // selected event-frame windows (set per extraction)
+If( Is Empty( int.AFDisplayMode ), int.AFDisplayMode = 0 );  // v4.1: 1 = the "PI AF search" checkbox is on (tree UI active)
 REST_ChunkSize = 5;                                // tags per Python call; matches the PI worker pool, drives the progress bar
 
 /* REST is the only transport: a server without a WebAPI URL cannot be queried */
@@ -339,20 +341,27 @@ f_REST_FindTags = Function( {TagName, TagDescription},
 		Python Send( rest_sql );
 		dt_rest = f_REST_PyCall( "rest_df = mc.ip21_sql(rest_base, rest_da, rest_sql)\!nrest_df['path'] = ''" );
 	,
-		// PI (v4.0): when an AF server is configured, the search runs against
-		// the ASSET FRAMEWORK — it returns every attribute whose name or
-		// description matches, identified by its full AF path. DA points not
-		// in AF are appended when the user ticks the option under the results.
+		// PI (v4.1): the "PI AF search" checkbox decides the mode explicitly.
+		// Checked -> ATTRIBUTE search only, against the configured AF server
+		// (and AF_Database when given); AF errors surface to the user instead
+		// of silently degrading to DA points. Unchecked -> plain DA point
+		// search, exactly like v3.
 		rest_name = Char( TagName );
 		rest_desc = Char( TagDescription );
 		rest_af = Char( PIAFServer );
-		rest_include_da = If( Try( AF_IncludeDATags << Get( 1 ), 1 ) == 1, 1, 0 );
-		If( Trim( rest_af ) == "", rest_include_da = 1 );  // no AF server -> DA search only
+		rest_afdb = Char( AFDatabase );
+		rest_af_only = If( Try( int.AFDisplayMode, 0 ) == 1, 1, 0 );
+		If( rest_af_only == 1 & Trim( rest_af ) == "",
+			f_DialogError( "PI AF search is checked but this server has no PI AF server configured. Set 'PI AF server' (and optionally 'AF database') in the server list or in 'Edit server address'." )
+		);
+		rest_include_da = 1;
 		Python Send( rest_name );
 		Python Send( rest_desc );
 		Python Send( rest_af );
+		Python Send( rest_afdb );
+		Python Send( rest_af_only );
 		Python Send( rest_include_da );
-		dt_rest = f_REST_PyCall( "rest_df = mc.pi_search(rest_base, rest_da, rest_af, rest_name, rest_desc, int(rest_include_da))" );
+		dt_rest = f_REST_PyCall( "rest_df = mc.pi_search(rest_base, rest_da, rest_af, rest_name, rest_desc, int(rest_include_da), rest_afdb, int(rest_af_only))" );
 	);
 
 	dt_rest << Set Name( "f_REST_FINDTAGS Results" );
@@ -454,80 +463,219 @@ f_EventFrames_ToJSON = Function( {lstIdx},
 
 
 /*
-    f_AF_FillTree Function
+    v4.1 — AF TREE UI
 
-    Renders the AF search results as a collapsible parent/child element tree
-    (Tree Box) above the flat results list. Browsing aid: the actual selection
-    still happens in the results list (labels are identical). Rebuilds the
-    tree on every search. Silently does nothing when the main GUI's tree
-    container is absent (e.g. the Add-tags window reuses the same search).
+    The "PI AF search" checkbox switches the tag-selection panels to TREE
+    displays (JSL Tree Box): the left tree shows the search results as the
+    element hierarchy (root = AF database, attributes as leaves), the right
+    tree mirrors the hierarchy of the SELECTED attributes. Leaves are labeled
+        attribute name {description} [units] {type}
+    while the underlying flat data model (lstbox_SelectedTags / TagSelect_AA)
+    keeps the v4.0 path-suffixed labels — those stay UNIQUE when the same
+    attribute name exists on several elements, so the extraction, filters and
+    report/recall pipelines are untouched.
 
-    @param dt: the search results table (tagnames = attribute path when AF).
+    Globals:
+      AF_Res_Paths / AF_Res_Pretty / AF_Res_Flat : last search results (AF rows)
+      AA.AF_PrettyByFlat                          : flat label -> tree label
+      int.AFDisplayMode                           : checkbox state (1 = trees)
+      tree_af / tree_sel                          : the two live Tree Boxes
 */
-f_AF_FillTree = Function( {dt},
 
-	// Only rows that are AF attributes (their identity contains '|')
-	lstIds = Column( dt, "tagnames" ) << Get Values;
-	lstLbls = Column( dt, "tag_desc_units" ) << Get Values;
+/* Shared builder: element hierarchy from full attribute paths. Roots at the
+   DATABASE (the AF server segment is dropped — same for every row). Each leaf
+   carries {path, pretty, flat} in its node data. Returns {roots, aa_nodes}. */
+f_AF_BuildTreeNodes = Function( {lstPaths, lstLabels, lstData},
 
 	aa_nodes = Associative Array();   // cumulative element path -> Tree Node
 	lstRoots = List();
-	n_af = 0;
 
-	For( i = 1, i <= N Items( lstIds ), i++,
-		If( Contains( lstIds[i], "|" ),
-			n_af++;
-			elem_path = Word( 1, lstIds[i], "|" );
-			segments = Words( elem_path, "\!\" );   // server, database, element...
-			cumul = "";
-			parent_node = Empty();
-			For( k = 1, k <= N Items( segments ), k++,
-				cumul = cumul || "\!\" || segments[k];
-				If( !(aa_nodes << Contains( cumul )),
-					new_node = Tree Node( segments[k] );
-					aa_nodes[cumul] = new_node;
-					If( Is Empty( parent_node ),
-						Insert Into( lstRoots, new_node ),
-						parent_node << Append( new_node )
-					);
+	For( i = 1, i <= N Items( lstPaths ), i++,
+		elem_path = Word( 1, lstPaths[i], "|" );
+		segments = Words( elem_path, "\!\" );   // AF server, database, elements...
+		If( N Items( segments ) > 1, Remove From( segments, 1 ) );  // drop the AF server
+		cumul = "";
+		parent_node = Empty();
+		For( k = 1, k <= N Items( segments ), k++,
+			cumul = cumul || "\!\" || segments[k];
+			If( !(aa_nodes << Contains( cumul )),
+				new_node = Tree Node( segments[k] );
+				aa_nodes[cumul] = new_node;
+				If( Is Empty( parent_node ),
+					Insert Into( lstRoots, new_node ),
+					parent_node << Append( new_node )
 				);
-				parent_node = aa_nodes[cumul];
 			);
-			// attribute leaf: same label as in the results list
-			parent_node << Append( Tree Node( lstLbls[i] ) );
-		)
+			parent_node = aa_nodes[cumul];
+		);
+		leaf = Tree Node( lstLabels[i] );
+		leaf << Set Data( lstData[i] );
+		leaf << Set Tip( lstPaths[i] );   // full AF path on hover
+		If( !Is Empty( parent_node ),
+			parent_node << Append( leaf ),
+			Insert Into( lstRoots, leaf )
+		);
 	);
 
-	// Rebuild the tree box inside its holder (main GUI only)
+	Eval List( {lstRoots, aa_nodes} );
+);
+
+
+/* Depth-first collection of the node data of every leaf at or under `node`.
+   Selecting an ELEMENT in the tree therefore means "all its attributes".
+   {Default Local} is REQUIRED: the function recurses, so the loop counter
+   must not be shared across recursion levels. */
+f_AF_CollectLeafData = Function( {node, lstOut},
+	{Default Local},
+	If( (node << Get Child Count) == 0,
+		leaf_data = node << Get Data;
+		If( !Is Empty( leaf_data ), Insert Into( lstOut, Eval List( {leaf_data} ) ) );
+	,
+		For( i_child = 1, i_child <= (node << Get Child Count), i_child++,
+			lstOut = f_AF_CollectLeafData( node << Get Child( i_child ), lstOut )
+		)
+	);
+	lstOut;
+);
+
+
+/* Rebuild the LEFT tree (search results) applying the search-bar filter to
+   the attribute labels. Elements without any matching attribute disappear
+   (the tree is built only from the matching rows). */
+f_AF_ShowResults = Function( {searchText},
+
 	Try(
+		keep_paths = {};
+		keep_pretty = {};
+		keep_data = {};
+		For( i = 1, i <= N Items( AF_Res_Paths ), i++,
+			If( Trim( searchText ) == "" | f_MatchSearchPattern( AF_Res_Pretty[i], searchText ),
+				Insert Into( keep_paths, AF_Res_Paths[i] );
+				Insert Into( keep_pretty, AF_Res_Pretty[i] );
+				// NB: Insert Into SPLICES list arguments — wrap the triplet in a
+				// one-element list so it lands as a single nested item
+				Insert Into( keep_data, Eval List( {Eval List( {AF_Res_Paths[i], AF_Res_Pretty[i], AF_Res_Flat[i]} )} ) );
+			)
+		);
+		n_hits = N Items( keep_paths );
+
 		Try( tree_af << Delete Box );
-		If( n_af > 0,
-			afTreeHolder << Append( tree_af = Tree Box( lstRoots, Size( 550 * RatioX, 170 * RatioY ) ) );
-			// expand the element levels so attributes are visible
+		If( n_hits > 0,
+			{lstRoots, aa_nodes} = f_AF_BuildTreeNodes( keep_paths, keep_pretty, keep_data );
+			afTreeHolder << Append( tree_af = Tree Box( lstRoots, Size( 550 * RatioX, 272 * RatioY ) ) );
+			tree_af << Set Multiselect( 1 );
 			aa_keys = aa_nodes << Get Keys;
 			For( k = 1, k <= N Items( aa_keys ), k++,
 				Try( tree_af << Expand( aa_nodes[aa_keys[k]] ) )
 			);
-			afTreeOutline << Set Title( "Asset hierarchy (" || Char( n_af ) || " attributes)" );
-			afTreeOutline << Close( 0 );
+		);
+		afTreeOutline << Set Title( "Attribute hierarchy (" || Char( n_hits ) || " attributes)" );
+		afTreeOutline << Close( 0 );
+		Try( txtbox_nbTags << Set Text( " [ " || Char( n_hits ) || " ] >>> " ) );
+	);
+);
+
+
+/* Rebuild the RIGHT tree (selected attributes) from TagSelect_AA — the
+   single source of truth. AF entries are the ones whose identity contains
+   '|'; their pretty label comes from AA.AF_PrettyByFlat (fallback: the
+   attribute name from the path). */
+f_AF_ShowSelection = Function( {},
+
+	Try(
+		sel_paths = {};
+		sel_pretty = {};
+		sel_flat = {};
+		lst_keys = TagSelect_AA << Get Keys;
+		For( i = 1, i <= N Items( lst_keys ), i++,
+			sel_id = TagSelect_AA[lst_keys[i]];
+			If( Contains( Char( sel_id ), "|" ),
+				Insert Into( sel_paths, sel_id );
+				Insert Into( sel_pretty, Try( AA.AF_PrettyByFlat[lst_keys[i]], Word( -1, sel_id, "|" ) ) );
+				Insert Into( sel_flat, lst_keys[i] );
+			)
+		);
+
+		sel_data = {};
+		For( i = 1, i <= N Items( sel_paths ), i++,
+			// wrapped: Insert Into splices bare lists (see f_AF_ShowResults)
+			Insert Into( sel_data, Eval List( {Eval List( {sel_paths[i], sel_pretty[i], sel_flat[i]} )} ) )
+		);
+
+		Try( tree_sel << Delete Box );
+		If( N Items( sel_paths ) > 0,
+			{lstRoots, aa_nodes} = f_AF_BuildTreeNodes( sel_paths, sel_pretty, sel_data );
+			selTreeHolder << Append( tree_sel = Tree Box( lstRoots, Size( 550 * RatioX, 272 * RatioY ) ) );
+			tree_sel << Set Multiselect( 1 );
+			aa_keys = aa_nodes << Get Keys;
+			For( k = 1, k <= N Items( aa_keys ), k++,
+				Try( tree_sel << Expand( aa_nodes[aa_keys[k]] ) )
+			);
+		);
+		selTreeOutline << Set Title( "Selected attributes (" || Char( N Items( sel_paths ) ) || ")" );
+		selTreeOutline << Close( 0 );
+	);
+);
+
+
+/* Toggle between the classic flat-list UI (DA points / IP21) and the v4.1
+   AF tree UI. Called by the "PI AF search" checkbox and on server change. */
+f_AF_SetMode = Function( {af_on},
+
+	int.AFDisplayMode = If( af_on == 1, 1, 0 );
+	Try(
+		If( int.AFDisplayMode == 1,
+			Try( txt_AvailTitle << Set Text( "Available attributes" ) );
+			Try( txt_SelTitle << Set Text( ">>> Selected attributes" ) );
+			Try( bb_FlatTags << Visibility( "Collapse" ) );
+			Try( afTreeOutline << Visibility( "Visible" ) );
+			Try( bb_SelFlat << Visibility( "Collapse" ) );
+			Try( selTreeOutline << Visibility( "Visible" ) );
+			Try( f_AF_ShowSelection() );
 		,
-			afTreeOutline << Set Title( "Asset hierarchy (no AF results)" );
-			afTreeOutline << Close( 1 );
+			Try( txt_AvailTitle << Set Text( "Available tags" ) );
+			Try( txt_SelTitle << Set Text( ">>> Selected tags" ) );
+			Try( bb_FlatTags << Visibility( "Visible" ) );
+			Try( afTreeOutline << Visibility( "Collapse" ) );
+			Try( bb_SelFlat << Visibility( "Visible" ) );
+			Try( selTreeOutline << Visibility( "Collapse" ) );
 		);
 	);
 );
 
 
 /*
+    f_REST_DiscoverServers Function (v4.1)
+
+    Asks the PI Web API what it exposes: PI Data Archive servers, AF servers
+    and their databases (GET /dataservers, /assetservers,
+    /assetservers/{id}/assetdatabases). Returns a table with the server-list
+    columns (site/server/Type/WebAPI_URL/PI_AF_Server/AF_Database) — the
+    'Load servers from Web API' button feeds it to f_BuildServersAA.
+*/
+f_REST_DiscoverServers = Function( {webapi_url},
+	f_REST_InitPython();
+	rest_base = Char( webapi_url );
+	Python Send( rest_base );
+	dt_rest = f_REST_PyCall( "rest_df = mc.pi_discover(rest_base)" );
+	dt_rest << Set Name( "Discovered PI servers" );
+	dt_rest << Show Window( 0 );
+	Return( dt_rest );
+);
+
+
+/*
     f_RunExtraction_PI_AF_Stacked Function
 
-    v4.0 asset-stacked extraction: TS, TS_UTC, [EventFrame], Asset, plus ONE
-    column per attribute NAME. Rows are concatenated per asset (JMP
-    Tables > Concatenate semantics): with reactors A/B/C the timestamps appear
-    three times, once per reactor, and "Temperature" is a single column. An
-    asset missing an attribute gets missing values. This lets users switch the
-    analyzed asset with a row filter instead of re-building the analysis
-    (Seeq-style asset swapping).
+    v4.1 concatenated ("stack by asset") extraction: TS, TS_UTC, [EventFrame],
+    Level 1..Level K, Asset, plus ONE column per attribute NAME. The Level
+    columns hold the AF element hierarchy below the database (multi-level
+    parent/child); Asset repeats the leaf element. Rows are concatenated per
+    asset (JMP Tables > Concatenate semantics): with reactors A/B/C the
+    timestamps appear three times, once per reactor, and "Temperature" is a
+    single column. An asset missing an attribute gets missing values. This
+    lets users switch the analyzed asset with a row filter instead of
+    re-building the analysis (Seeq-style asset swapping).
 
     @param lstPaths: full AF attribute paths (\\AF\DB\Element|Attribute).
 */

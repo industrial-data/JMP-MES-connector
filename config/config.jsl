@@ -29,7 +29,7 @@
 // --------------------------------- 1. VERSION --------------------------------- //
  
 /* Application version. If PROD, it's a version like: 1.0.0, 1.2.1 etc... If DEV, it's “(DEV)” followed by the date in yyyymmdd format. */
- Version = "2026@ V.4.0.0";
+ Version = "2026@ V.4.1.0";
 
 /* TLS certificate verification for the REST connections (1 = verify, default).
    Corporate CAs are honored via the OS certificate store. Only set to 0 for

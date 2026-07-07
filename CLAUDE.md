@@ -8,18 +8,33 @@ and **OSIsoft/Aveva PI**. Users pick a server, search tags, set a time range and
 extraction method (Interpolated / Average / Actual), optionally add filters, and get the
 data as a JMP table.
 
-**v4.0 — PI Asset Framework** (on top of the v3.0 REST architecture below):
+**v4.1 — PI Asset Framework** (on top of the v3.0 REST architecture below):
 
-- AF attribute search (`mes_connector/pi_af.py`, `search_af_attributes`): with a
-  `PI_AF_Server` configured, PI searches return AF attributes identified by their full
-  path (`\\AF\DB\Element|Attribute`); the GUI shows a collapsible element tree
-  (`f_AF_FillTree`, Tree Box) above the flat list, plus an option to include non-AF DA
-  points. Labels: `attr (desc) [units] {path}`; extraction resolves paths via
-  `/attributes?path=` (attribute WebIds are streamable).
-- "Stack by asset" option (`OptStackAssets` → `f_RunExtraction_PI_AF_Stacked` →
-  `pi_extract_assets`): output `TS, TS_UTC, [EventFrame], Asset, <attribute-name cols>`,
-  rows concatenated per asset, missing attributes = missing values. Update/Refresh and
-  Add-tags are guarded off for stacked tables (not yet supported).
+- EXPLICIT AF mode: the "PI AF search (attributes)" checkbox (`chkbox_AFSearch` →
+  `f_AF_SetMode` → `int.AFDisplayMode`) switches search + panels. Checked: attribute-only
+  search (`pi_search(..., af_only=1)`, AF errors surface — no silent DA fallback),
+  restricted to the server list's `AF_Database` when set (new optional column; wrong name
+  raises listing the available databases). Unchecked: plain DA search like v3.
+- TREE selection UI (`Ressources_REST.jsl` AF section): results tree (`tree_af` in
+  `afTreeOutline`, root = database, leaves `attr {desc} [units] {type}`, tooltip = path)
+  and a mirrored selection tree (`tree_sel`). Both multiselect; selecting an element
+  means all its attributes (`f_AF_CollectLeafData` — recursive, needs `{Default Local}`).
+  The flat lists stay the DATA MODEL (path-suffixed labels = unique identities in
+  `TagSelect_AA`; pretty labels in `AA.AF_PrettyByFlat`) and are hidden in AF mode.
+  The search-bar filter rebuilds the tree (`f_AF_ShowResults` + `f_MatchSearchPattern`),
+  pruning elements with no matching attribute.
+- Server-list discovery: "Load servers from Web API..." button → `f_REST_DiscoverServers`
+  → `pi_discover` (`GET /dataservers`, `/assetservers`, per-server databases) →
+  `f_BuildServersAA` (factored out of `f_LoadServerList`; also used by the Excel path).
+- "Concat results" option (`OptStackAssets` → `f_RunExtraction_PI_AF_Stacked` →
+  `pi_extract_assets`): output `TS, TS_UTC, [EventFrame], Level 1..K, Asset,
+  <attribute-name cols>` — Level columns = element hierarchy below the database; rows
+  concatenated per asset, missing attributes = missing values. Update/Refresh and
+  Add-tags are guarded off for stacked tables (not yet supported); the Add-tags window
+  searches DA points only (no AF checkbox there).
+- Column metadata for the organizer: wide AF columns get `tag_attribute`, `af_element`,
+  `af_path` properties (stacked: `tag_attribute` on attribute columns; `addin_colname`
+  on `Level i`/`Asset`).
 - Event frames (Filters tab): `f_REST_FindEventFrames` searches by name/template;
   selected frames' windows restrict the extraction (`EFWindows_JSON` →
   `apply_event_frames`, adds an `EventFrame` column).

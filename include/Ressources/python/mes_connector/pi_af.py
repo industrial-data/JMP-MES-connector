@@ -58,13 +58,73 @@ def _af_server_webid(base: str, af_server: str) -> str:
     raise RuntimeError(f"PI AF server '{af_server}' not found at {base}")
 
 
-def _databases(base: str, af_webid: str) -> list[dict]:
+def _databases(base: str, af_webid: str, database: str = "") -> list[dict]:
+    """Databases of an AF server; restricted to one when `database` is given.
+
+    v4.1: an AF server can host MANY databases — searching all of them is slow
+    and returns attributes the user does not care about, so the server list's
+    AF_Database field narrows the scope. A named database that does not exist
+    is an ERROR (typo in the server list), not an empty result.
+    """
     s = get_session(base)
     r = s.get(f"{base}/assetservers/{af_webid}/assetdatabases",
               params={"selectedFields": "Items.WebId;Items.Name;Items.Path"}, timeout=60)
     _pi._log_url(r)
     r = check_response( r )
-    return r.json().get("Items", [])
+    items = r.json().get("Items", [])
+    want = (database or "").strip()
+    if not want:
+        return items
+    hits = [db for db in items if str(db.get("Name", "")).strip().lower() == want.lower()]
+    if not hits:
+        names = ", ".join(str(db.get("Name", "")) for db in items) or "<none>"
+        raise RuntimeError(
+            f"AF database '{want}' not found on this AF server (available: {names}). "
+            "Check the AF_Database field in the server list.")
+    return hits
+
+
+def discover_servers(base_url: str) -> pd.DataFrame:
+    """Enumerate what a PI Web API endpoint exposes: PI Data Archive (DA)
+    servers, AF servers and their databases.
+
+    Endpoints: GET /dataservers and GET /assetservers (both are root links of
+    the PI Web API home controller), then /assetservers/{webid}/assetdatabases.
+
+    Returns ready-to-use server-list rows (same columns as
+    MES_servers_list.xlsx): one row per DA server (plain point search) plus one
+    row per AF server x database (attribute search). The first DA server is
+    used as the companion `server` for AF rows (needed for DA lookups).
+    """
+    base = base_url.rstrip("/")
+    s = get_session(base)
+
+    r = s.get(f"{base}/dataservers",
+              params={"selectedFields": "Items.Name;Items.IsConnected"}, timeout=60)
+    _pi._log_url(r)
+    r = check_response( r )
+    da_names = [str(it.get("Name", "")) for it in r.json().get("Items", [])]
+
+    rows: list[dict] = []
+    for da in da_names:
+        rows.append({"site": f"{da} (DA points)", "server": da, "Type": "PI",
+                     "WebAPI_URL": base, "PI_AF_Server": "", "AF_Database": ""})
+
+    r = s.get(f"{base}/assetservers",
+              params={"selectedFields": "Items.Name;Items.WebId"}, timeout=60)
+    _pi._log_url(r)
+    r = check_response( r )
+    default_da = da_names[0] if da_names else ""
+    for af in r.json().get("Items", []):
+        af_name = str(af.get("Name", ""))
+        for db in _databases(base, af["WebId"]):
+            db_name = str(db.get("Name", ""))
+            rows.append({"site": f"{db_name} (AF: {af_name})", "server": default_da,
+                         "Type": "PI", "WebAPI_URL": base,
+                         "PI_AF_Server": af_name, "AF_Database": db_name})
+
+    return pd.DataFrame(
+        rows, columns=["site", "server", "Type", "WebAPI_URL", "PI_AF_Server", "AF_Database"])
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +132,12 @@ def _databases(base: str, af_webid: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 def search_attributes(base_url: str, af_server: str, name_filter: str = "",
                       description_filter: str = "",
-                      max_results: int | None = None) -> pd.DataFrame:
-    """Search attributes across every database of the AF server.
+                      max_results: int | None = None,
+                      database: str = "") -> pd.DataFrame:
+    """Search attributes across the AF server's databases.
+
+    v4.1: `database` (server list AF_Database field) restricts the search to
+    one database — recommended, since AF servers commonly host many.
 
     Returns the GUI contract columns: tagnames / descriptions / units / type /
     path — where `tagnames` is the FULL attribute path (unique identity used
@@ -90,7 +154,7 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
         nf = f"*{nf}*"
 
     rows: list[dict] = []
-    for db in _databases(base, af_webid):
+    for db in _databases(base, af_webid, database):
         start_index, page = 0, 1000
         while max_results is None or len(rows) < max_results:
             count = page if max_results is None else min(page, max_results - len(rows))
@@ -220,17 +284,34 @@ def apply_event_frames(wide: pd.DataFrame, ef_list: list[dict]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Asset-stacked extraction (the v4.0 headline feature)
 # ---------------------------------------------------------------------------
+def _element_levels(elem_path: str) -> list[str]:
+    r"""Hierarchy levels of an element path, database excluded.
+
+    \\AFSRV\DB\Area\Line\Reactor A -> ["Area", "Line", "Reactor A"]
+    (the first two segments are the AF server and the database — they are the
+    same for every row of an extraction, so they carry no information).
+    """
+    segs = [p for p in elem_path.lstrip("\\").split("\\") if p]
+    if len(segs) > 2:
+        return segs[2:]
+    return segs[-1:] if segs else []
+
+
 def extract_assets(base_url: str, attribute_paths: list[str], method: str,
                    start: str, end: str, interval_s: int,
                    filter_expression: str = "") -> pd.DataFrame:
-    """Extract AF attributes stacked per asset (long format).
+    """Extract AF attributes stacked (concatenated) per asset — long format.
 
-    Output: TS, TS_UTC, Asset, <one column per attribute NAME>.
+    Output: TS, TS_UTC, Level 1..Level K, Asset, <one column per attribute NAME>.
+    - `Level i` columns hold the AF element hierarchy below the database
+      (v4.1 — multi-level parent/child, e.g. Area / Line / Reactor A); K is
+      the deepest selected element, shallower elements leave the extra levels
+      empty. `Asset` repeats the leaf element name (level-agnostic row filter).
     - Attributes are grouped by their parent element (the asset); each asset's
       attributes are extracted on the same aligned grid and become one block
-      of rows with the asset name in `Asset`. Blocks are concatenated
-      vertically (JMP Tables > Concatenate semantics): with 3 reactors the
-      timestamps appear 3 times, once per reactor.
+      of rows. Blocks are concatenated vertically (JMP Tables > Concatenate
+      semantics): with 3 reactors the timestamps appear 3 times, once per
+      reactor.
     - The columns are the UNION of attribute names across assets; an asset
       missing an attribute simply gets missing values in that column.
     """
@@ -249,22 +330,29 @@ def extract_assets(base_url: str, attribute_paths: list[str], method: str,
             if a not in all_attrs:
                 all_attrs.append(a)
 
+    levels = {elem: _element_levels(elem) for elem in assets}
+    n_levels = max((len(v) for v in levels.values()), default=1)
+    level_cols = [f"Level {i + 1}" for i in range(n_levels)]
+
     def _one_asset(elem: str, attrs: dict[str, str]) -> pd.DataFrame:
         paths = list(attrs.values())
         labels = list(attrs.keys())
         wide = _pi.extract(base, "", paths, labels, method, start, end,
                            int(interval_s), filter_expression)
-        asset_name = elem.rpartition("\\")[2] or elem
-        wide.insert(2, "Asset", asset_name)
+        lv = levels[elem]
+        for i, col in enumerate(level_cols):
+            wide[col] = lv[i] if i < len(lv) else ""
+        wide["Asset"] = elem.rpartition("\\")[2] or elem
         # union of columns: add the attributes this asset does not have
         for a in all_attrs:
             if a not in wide.columns:
                 wide[a] = np.nan
-        return wide[["TS", "TS_UTC", "Asset"] + all_attrs]
+        return wide[["TS", "TS_UTC"] + level_cols + ["Asset"] + all_attrs]
 
     parts = []
     for elem in assets:  # assets sequentially; tags within an asset in parallel
         parts.append(_one_asset(elem, assets[elem]))
 
     out = pd.concat(parts, axis=0, ignore_index=True)
-    return out.sort_values(["Asset", "TS_UTC"], kind="stable").reset_index(drop=True)
+    return (out.sort_values(level_cols + ["Asset", "TS_UTC"], kind="stable")
+               .reset_index(drop=True))

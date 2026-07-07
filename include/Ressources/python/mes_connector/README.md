@@ -48,8 +48,10 @@ the server name), `server` (MANDATORY — PI Data Archive name or IP21 ADSA data
 source name), `Type` (PI | IP21), `WebAPI_URL` (MANDATORY — tolerant to missing
 scheme and trailing `/`; a bare host is completed to `/piwebapi` or
 `/ProcessData/AtProcessDataREST.dll` by `normalize_base_url`; the IP21 URL must
-end up pointing at that .dll), `PI_AF_Server` (optional, PI only — future AF
-search).
+end up pointing at that .dll), `PI_AF_Server` (optional, PI only — enables the
+AF attribute search), `AF_Database` (optional, PI only, v4.1 — restrict the AF
+search to one database of that AF server; strongly recommended when the AF
+server hosts several databases).
 
 ## Authentication & credential security
 
@@ -74,24 +76,36 @@ Every HTTP request URL is `print()`ed so it appears in the JMP log (v2.x did
 the same with its PowerShell commands). Look for `GET https://.../streams/...`
 lines when an extraction misbehaves. Toggle with `pi_webapi.LOG_URLS`.
 
-## v4.0: PI Asset Framework (pi_af.py)
+## v4.1: PI Asset Framework (pi_af.py)
 
-When `PI_AF_Server` is set, the search runs against the ASSET FRAMEWORK
-(`/assetdatabases/{id}/elementattributes`, `searchFullHierarchy=true`): every
-attribute matching the name/description filters is returned, identified by its
-full AF path (`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders
-the results as a collapsible element tree (Tree Box) and labels them
-`attr (description) [units] {path}`. DA points not in AF are appended when the
-user ticks the option under the results. Attribute WebIds are streamable, so
+The GUI's **"PI AF search" checkbox** drives the mode explicitly
+(`pi_search(..., af_only=1)`): checked, the search returns ONLY attributes and
+AF errors PROPAGATE (no silent degradation to DA points — that v4.0 behavior
+hid every AF misconfiguration); unchecked, it is a plain DA point search like
+v3. The search runs against `/assetdatabases/{id}/elementattributes`
+(`searchFullHierarchy=true`) and is restricted to ONE database when the server
+list provides `AF_Database` (recommended; a typo'd database name raises with
+the list of available ones). Results are identified by the full AF path
+(`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders them as an
+element-hierarchy Tree Box (root = database) labeled
+`attr {description} [units] {type}`; the path-suffixed label remains the
+unique identity in the selection model. Attribute WebIds are streamable, so
 extraction reuses the same /streams code (`_point_info` resolves paths via
 `/attributes?path=`).
 
-**Asset-stacked extraction** (`pi_extract_assets`): attributes grouped by
-parent element; output is `TS, TS_UTC, [EventFrame], Asset, <one column per
-attribute NAME>` — rows concatenated per asset (JMP Tables > Concatenate
-semantics: timestamps repeat once per asset), missing attributes become
-missing values. This gives Seeq-style asset swapping through a simple row
-filter instead of one column per asset-attribute pair.
+**Discovery** (`pi_discover`): `GET /dataservers` + `/assetservers` (+ each
+server's databases) → ready server-list rows
+(site/server/Type/WebAPI_URL/PI_AF_Server/AF_Database), one per DA server and
+one per AF database. Feeds the GUI's "Load servers from Web API..." button.
+
+**Concatenated ("stack by asset") extraction** (`pi_extract_assets`):
+attributes grouped by parent element; output is `TS, TS_UTC, [EventFrame],
+Level 1..Level K, Asset, <one column per attribute NAME>` — rows concatenated
+per asset (JMP Tables > Concatenate semantics: timestamps repeat once per
+asset), missing attributes become missing values. The `Level i` columns hold
+the element hierarchy below the database (multi-level parent/child); `Asset`
+repeats the leaf element name. This gives Seeq-style asset swapping through a
+simple row filter instead of one column per asset-attribute pair.
 
 **Event frames** (`search_event_frames` + `apply_event_frames`): frames
 overlapping the extraction window can be searched by name/template; the JSL

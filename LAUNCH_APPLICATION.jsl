@@ -136,15 +136,29 @@ If( N Rows( dt_MES_servers ) == 0,
 	f_DialogError( "Empty servers list" )
 );
 
-/* v3.0 simplified server list schema (REST is the only transport):
+Return( f_BuildServersAA( dt_MES_servers ) );
+);
+
+/*
+    f_BuildServersAA Function (v4.1 — factored out of f_LoadServerList)
+    Rebuilds AA.ServersInfo from a server-list data table and closes it.
+    Used by BOTH server-list sources: the Excel file and the PI Web API
+    discovery ("Load servers from Web API..." button).
+
+    v3.0 simplified server list schema (REST is the only transport):
      site        - optional display name (falls back to the server name)
      server      - MANDATORY: PI Data Archive name or IP21 data source name
      Type        - "PI" or "IP21"
      WebAPI_URL  - MANDATORY: PI Web API / Aspen ProcessData REST address.
                    Tolerant to missing scheme and trailing '/'; a bare host is
                    completed to /piwebapi or /ProcessData/AtProcessDataREST.dll.
-     PI_AF_Server- optional, PI only: AF server for the future attribute search.
-   Ensure the optional columns exist even if the file omits them. */
+     PI_AF_Server- optional, PI only: AF server for the attribute search.
+     AF_Database - optional, PI only (v4.1): restrict the AF attribute search
+                   to ONE database of that AF server (recommended — AF servers
+                   commonly host several databases).
+   Ensures the optional columns exist even if the file omits them. */
+f_BuildServersAA = Function( {dt_MES_servers},
+
 lstServerCols = dt_MES_servers << Get Column Names( "String" );
 If( !Contains( lstServerCols, "site" ),
 	dt_MES_servers << New Column( "site", "Character" )
@@ -154,6 +168,9 @@ If( !Contains( lstServerCols, "WebAPI_URL" ),
 );
 If( !Contains( lstServerCols, "PI_AF_Server" ),
 	dt_MES_servers << New Column( "PI_AF_Server", "Character" )
+);
+If( !Contains( lstServerCols, "AF_Database" ),
+	dt_MES_servers << New Column( "AF_Database", "Character" )
 );
 
 /* Display name in the server list box: site (or server) + type + server name */
@@ -172,7 +189,7 @@ dt_MES_servers << Sort( By( :JMP_list ), Replace Table, Order( Ascending ), Copy
 /* Retrieve the values from MES Servers list data Table */
 AA.ServersInfo = Associative Array();
 
-For( i = 1, i <= N Rows( dt_MES_servers ), i++, 
+For( i = 1, i <= N Rows( dt_MES_servers ), i++,
 
 	Eval(
 		Eval Expr(
@@ -189,13 +206,14 @@ For( i = 1, i <= N Rows( dt_MES_servers ), i++,
 					List( "NetworkNode", Expr( Column( dt_MES_servers, "server" )[i] ) ),
 					List( "Extension", "" ),
 					List( "WebAPI_URL", Expr( Column( dt_MES_servers, "WebAPI_URL" )[i] ) ),
-					List( "PI_AF_Server", Expr( Column( dt_MES_servers, "PI_AF_Server" )[i] ) )
+					List( "PI_AF_Server", Expr( Column( dt_MES_servers, "PI_AF_Server" )[i] ) ),
+					List( "AF_Database", Expr( Column( dt_MES_servers, "AF_Database" )[i] ) )
 				)
 			)
 
 		)
 	)
-	
+
 );
 
 StrTagName = "";
@@ -226,6 +244,7 @@ TagSelect_AA = Associative Array();
 
 // Initialize the associative array with all filters (empty for the moment because there is no filters)
 Filters_AA = Associative Array(); //[KEY: ID, corresponds to the order of appearance in the list of filters] [VALUE: 1- Tagname with unit/descr (str) / 2- Tag Type (str) / 3- Filters (list of list)]
+AA.AF_PrettyByFlat = Associative Array(); // v4.1: flat (path-suffixed) label -> pretty tree label for selected AF attributes
 TagType_AA = Associative Array(); //[KEY:Tagname with unit/descr (str)] [VALUE: 1- Tag Type (str) ]
 NextID = 1;
 
@@ -368,6 +387,8 @@ WinTag = New Window( "IP21PI Data Retrieval",
 														txtbox_WebAPIURL = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
 														Text Box( "PI AF server (optional):" ),
 														txtbox_PIAFServer = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
+														Text Box( "AF database (optional):" ),
+														txtbox_AFDatabase = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
 														rdbox_ServerType = Radio Box(
 															{"IP21", "PI"}, 
 															/* If user changes server type, all filters registered will be removed as they are built differently between IP21 and PI */
@@ -381,6 +402,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 											)
 									),
 									Border Box( top( 15 ), Left( 15 ), Bottom( 8 ),
+										H List Box(
 										/* v-GUI: replaces the unclear "Name data file" box. Loads a
 										   custom server list (same columns as MES_servers_list.xlsx)
 										   and remembers the choice for future sessions. The output
@@ -399,11 +421,56 @@ WinTag = New Window( "IP21PI Data Retrieval",
 													f_DialogWarning( "Could not load the server list (check the columns match MES_servers_list.xlsx)" )
 												)
 											);
+										),
+										/* v4.1: build the server list straight from a PI Web API —
+										   discovers the DA servers, AF servers and AF databases
+										   (one list entry per database). Not persisted: reload or
+										   copy the entries into your Excel list to keep them. */
+										bttn_DiscoverServers = Button Box( "Load servers from Web API...",
+											str.discover_url = "";
+											Try( str.discover_url = Char( txtbox_WebAPIURL << Get Text ) );
+											win_discover = New Window( "Discover PI servers",
+												<<Modal,
+												<<Return Result,
+												V List Box(
+													Border Box( Left( 10 ), Right( 10 ), Top( 10 ),
+														Text Box( "PI Web API address (e.g. https://piserver/piwebapi):" )
+													),
+													Border Box( Left( 10 ), Top( 6 ),
+														teb_discover_url = Text Edit Box( str.discover_url, <<Set Width( 320 ) )
+													),
+													Border Box( Left( 10 ), Top( 10 ), Bottom( 10 ),
+														H List Box( Button Box( "OK" ), Button Box( "Cancel" ) )
+													)
+												)
+											);
+											If( win_discover["Button"] == 1,
+												str.discover_url = Trim( win_discover["teb_discover_url"] );
+												If( str.discover_url != "",
+													Try(
+														dt_discovered = f_REST_DiscoverServers( str.discover_url );
+														If( N Rows( dt_discovered ) == 0,
+															Close( dt_discovered, NoSave );
+															f_DialogWarning( "The Web API answered but reported no DA or AF servers." )
+														,
+															f_BuildServersAA( dt_discovered );
+															lst_MES_servers << Remove All;
+															lst_MES_servers << Append( AA.ServersInfo << Get Keys );
+															lst_MES_servers << Set Selected( 1 );
+															f_UpdateMESInfo();
+															f_Log( "INFO", "Server list discovered from Web API - " || str.discover_url, "REST" );
+														)
+													,
+														f_DialogWarning( "Web API discovery failed - check the address and the log (CTRL+Shift+L) for the request URLs." )
+													)
+												);
+											);
+										)
 										)
 									)
 								)
 							) // END Outline box Server
-						), 
+						),
 						
 						// --------------------------------- TAG SEARCH --------------------------------- //
 						
@@ -420,8 +487,16 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												txtbox_TagDesc = Text Edit Box( "" )
 											)
 										),
+										/* v4.1: explicit AF mode — checked, the search returns ONLY
+										   AF attributes (needs a PI AF server on the selected server)
+										   and the result/selection panels switch to hierarchy trees */
+										Border Box( top( 4 ), Left( 4 ),
+											chkbox_AFSearch = Check Box( {"PI AF search (attributes)"},
+												f_AF_SetMode( chkbox_AFSearch << Get( 1 ) )
+											)
+										),
 										V Center Box(
-											Button Box( "Find tags", 
+											Button Box( "Find tags",
 											
 												/* Test if at least 1 server is selected */
 												Try( selected_MES = (lst_MES_servers << Get Selected)[1], f_DialogError( "No server selected" ) );
@@ -437,13 +512,14 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												WebAPIURL = Trim( txtbox_WebAPIURL << Get Text );
 												DAServer = Char( MES );
 												PIAFServer = Trim( txtbox_PIAFServer << Get Text );
+												AFDatabase = Trim( txtbox_AFDatabase << Get Text );
 												f_CheckMESInfo( MES, ServerExtension, ServerType, ShortName, is_checked );
 
 												/* This server should be pre-selected in the future */
 												Try( Save Text File(
 													str.PathLastServerSelected,
 													Eval Insert(
-														"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";"
+														"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";Recall.AFDatabase = \!"^AFDatabase^\!";"
 													)
 												) );
 
@@ -521,7 +597,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 													OptSummary = Check Box( {""} ),
 													// v4.0: one row per timestamp x asset, one column per
 													// attribute NAME + an Asset column (AF selections only)
-													Text Box( "Stack by asset:" ),
+													Text Box( "Concat results:", <<Set Tip( "Concatenate the per-asset results into one stacked table: timestamps repeat per asset, Level 1..N element hierarchy columns, one column per attribute name" ) ),
 													OptStackAssets = Check Box( {""} ),
 													Text Box( "Workflow:" ),
 													bttnWorkflow = Button Box( "Select file", 
@@ -561,7 +637,7 @@ WinTag = New Window( "IP21PI Data Retrieval",
 								H List Box(
 									V List Box(
 										Border Box( Top( 15 ), Bottom( 5 ), Left( 4 ),
-											Lineup Box( N Col( 2 ), Text Box( "Available tags" ), txtbox_nbTags = Text Box( " >>>" ) )
+											Lineup Box( N Col( 2 ), txt_AvailTitle = Text Box( "Available tags" ), txtbox_nbTags = Text Box( " >>>" ) )
 										),
 										H List Box(
 							
@@ -584,27 +660,46 @@ WinTag = New Window( "IP21PI Data Retrieval",
 
 											)
 										),
-										// v4.0: collapsible AF element hierarchy (built after each
-										// search when the server has a PI AF server configured).
-										// Browsing aid — the selection happens in the list below.
-										afTreeOutline = Outline Box( "Asset hierarchy",
+										// v4.1: AF attribute hierarchy — in AF mode this TREE is the
+										// results display AND the selection surface (multi-select;
+										// picking an element selects all its attributes). Hidden in
+										// plain tag mode, where the flat list below is shown instead.
+										afTreeOutline = Outline Box( "Attribute hierarchy",
 											afTreeHolder = V List Box( Spacer Box( Size( 1, 1 ) ) )
 										),
-										Border Box( Left( 26 ), lstAvailableTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) ) ),
-										// v4.0: option under the results — also list tags that are
-										// not in the Asset Framework (plain DA points)
-										Border Box( Left( 26 ),
-											AF_IncludeDATags = Check Box( {"Also show tags not in AF (DA points)"} )
-										)
+										bb_FlatTags = Border Box( Left( 26 ), lstAvailableTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) ) )
 									),
 									V List Box(
 										Border Box( Top( 145 * RatioY ), Right( 10 ), Left( 10 ),
-											bttn_AddTag = Button Box( "", 
-								
+											bttn_AddTag = Button Box( "",
+
+												/* v4.1 AF mode: the selection comes from the results TREE.
+												   Selecting an element adds every attribute below it; the
+												   flat data model (path-suffixed labels) stays authoritative */
+												If( Try( int.AFDisplayMode, 0 ) == 1,
+													lst_af_triplets = {};
+													sel_af_nodes = Try( tree_af << Get Selected, Empty() );
+													If( !Is Empty( sel_af_nodes ),
+														If( !Is List( sel_af_nodes ), sel_af_nodes = Eval List( {sel_af_nodes} ) );
+														For( k_af = 1, k_af <= N Items( sel_af_nodes ), k_af++,
+															lst_af_triplets = f_AF_CollectLeafData( sel_af_nodes[k_af], lst_af_triplets )
+														);
+													);
+													For( k_af = 1, k_af <= N Items( lst_af_triplets ), k_af++,
+														af_flat = lst_af_triplets[k_af][3];
+														If( !(TagSelect_AA << Contains( af_flat )),
+															TagSelect_AA[af_flat] = lst_af_triplets[k_af][1];
+															AA.AF_PrettyByFlat[af_flat] = lst_af_triplets[k_af][2];
+															lstbox_SelectedTags << Append( Eval List( {af_flat} ) );
+															lstbox_SelectedTags2 << Append( Eval List( {af_flat} ) );
+														)
+													);
+													f_AF_ShowSelection();
+												,
 												selected_tags = lstAvailableTags << GetSelected;
-								
-												/* Check if at least one of the selected tag was already selected before */ 
-												If( N Items( selected_tags ) > 0, 
+
+												/* Check if at least one of the selected tag was already selected before */
+												If( N Items( selected_tags ) > 0,
 												
 													For( k = N Items( selected_tags ), k >= 1, k--, 
 													
@@ -626,28 +721,54 @@ WinTag = New Window( "IP21PI Data Retrieval",
 															)
 														);
 													);
-													
+
 												);
-												
+
 												/* Update list of selected tags in both tabs */
 												lstbox_SelectedTags << Append( selected_tags );
 												lstbox_SelectedTags2 << Append( selected_tags );
-												
+												);   // end v4.1 AF/flat mode branch
+
 												/* Update number of selected tags */
 												n_selected = N Items( lstbox_SelectedTags << Get Items() );
 												Try(
 													If( n_selected == 0,
 														txtbox_nbSelectTags << Set Text( "" ),
 														txtbox_nbSelectTags << Set Text( " [ " || Char( n_selected ) || " ]" )
-													) 
+													)
 
 												);
-												
+
 											)
 										),
 										Border Box( Right( 10 ), Left( 10 ),
-											bttn_RemoveTag = Button Box( "", 
-								
+											bttn_RemoveTag = Button Box( "",
+
+												/* v4.1 AF mode: the user picks nodes in the SELECTED tree —
+												   map them (elements = their whole subtree) to the flat
+												   labels and select those in the underlying list, then let
+												   the shared removal flow below do its usual job */
+												If( Try( int.AFDisplayMode, 0 ) == 1,
+													Try(
+														lst_af_flat = {};
+														sel_af_nodes = Try( tree_sel << Get Selected, Empty() );
+														If( !Is Empty( sel_af_nodes ),
+															If( !Is List( sel_af_nodes ), sel_af_nodes = Eval List( {sel_af_nodes} ) );
+															lst_af_triplets = {};
+															For( k_af = 1, k_af <= N Items( sel_af_nodes ), k_af++,
+																lst_af_triplets = f_AF_CollectLeafData( sel_af_nodes[k_af], lst_af_triplets )
+															);
+															For( k_af = 1, k_af <= N Items( lst_af_triplets ), k_af++,
+																Insert Into( lst_af_flat, lst_af_triplets[k_af][3] )
+															);
+														);
+														lst_sel_items = lstbox_SelectedTags << Get Items();
+														For( k_af = 1, k_af <= N Items( lst_sel_items ), k_af++,
+															lstbox_SelectedTags << Set Selected( k_af, If( Contains( lst_af_flat, lst_sel_items[k_af] ), 1, 0 ) )
+														);
+													)
+												);
+
 												/* Check if at least 1 tag to be removed was used for a filter. In this case, we remove also the filter */
 												Try(
 													tags_to_remove = lstbox_SelectedTags << Get selected();
@@ -703,6 +824,9 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												lstbox_SelectedTags << Remove Selected;
 												lstbox_SelectedTags2 << Remove All;
 												lstbox_SelectedTags2 << Append( lstbox_SelectedTags << Get Items() );
+
+									/* v4.1: keep the AF selection tree in sync */
+												Try( If( Try( int.AFDisplayMode, 0 ) == 1, f_AF_ShowSelection() ) );
 									
 									/* Update number of tags selected */
 												n_selected = N Items( lstbox_SelectedTags << Get Items() );
@@ -718,9 +842,15 @@ WinTag = New Window( "IP21PI Data Retrieval",
 									),
 									V List Box(
 										Border Box( Top( 20 ),
-											Lineup Box( N Col( 2 ), Text Box( ">>> Selected tags" ), txtbox_nbSelectTags = Text Box( " " ) )
+											Lineup Box( N Col( 2 ), txt_SelTitle = Text Box( ">>> Selected tags" ), txtbox_nbSelectTags = Text Box( " " ) )
 										),
-										Border Box( Top( 18 ), Left( 2 ),
+										// v4.1: in AF mode the selection is shown as the SAME element
+										// hierarchy as the results (right tree); the flat list stays
+										// the underlying data model and is shown in plain tag mode
+										selTreeOutline = Outline Box( "Selected attributes",
+											selTreeHolder = V List Box( Spacer Box( Size( 1, 1 ) ) )
+										),
+										bb_SelFlat = Border Box( Top( 18 ), Left( 2 ),
 											lstbox_SelectedTags = List Box( {}, <<Set Size( 550 * RatioX, 272 * RatioY ) )
 										),
 										Lineup Box( N Col( 3 ),
@@ -729,11 +859,14 @@ WinTag = New Window( "IP21PI Data Retrieval",
 												lstbox_SelectedTags2 << Remove All;
 												lstFiltersRegistered << Remove All;
 												txtbox_nbSelectTags << Set Text( "" );
-												
+
 												/* If we remove all tags, then we also remove all potential filters registered by the user */
 												TagSelect_AA = Associative Array();
 												Filters_AA = Associative Array();
 												NextID = 1;
+
+												/* v4.1: clear the AF selection tree too */
+												Try( f_AF_ShowSelection() );
 											),
 											bttn_PasteTag = Button Box( "Paste",
 												copiedtags = Get Clipboard();
@@ -1547,7 +1680,8 @@ PeriodPanel << Visibility( "Visible" );
 txt_sep_edit << Visibility( "Collapse" );
 txt_sep << Visibility( "Collapse" );
 outline_FiltersRegistered << Close( 1 );
-Try( AF_IncludeDATags << Set( 1, 1 ) );  // default ON: show non-AF (DA) tags like v3 did
+// v4.1: start in plain tag mode — the trees appear when "PI AF search" is checked
+Try( f_AF_SetMode( 0 ) );
 
 /* Initialize server selection */
 lst_MES_servers << Append( AA.ServersInfo << get keys ); // Initialize the list box with the list of MES servers found in MES_servers_list.csv
@@ -1573,6 +1707,7 @@ Try(
 		// versions don't have them yet)
 		Try( txtbox_WebAPIURL << Set Text( Char( Recall.WebAPIURL ) ) );
 		Try( txtbox_PIAFServer << Set Text( Char( Recall.PIAFServer ) ) );
+		Try( txtbox_AFDatabase << Set Text( Char( Recall.AFDatabase ) ) );
 		Match( Recall.ServerType, "IP21", rdbox_ServerType << set( 1 ), rdbox_ServerType << set( 2 ) );
 		chkbox_edit_adress << set( 1 );
 		panel_ServerAdress << Visibility( "Visible" );

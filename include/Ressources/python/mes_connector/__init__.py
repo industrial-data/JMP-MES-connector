@@ -57,39 +57,67 @@ from .auth import (  # noqa: F401 (re-exported for JSL)
     set_credentials,
 )
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 
 # ---------------------------------------------------------------------------
 # v4.0 — PI Asset Framework (see pi_af.py for the endpoint documentation)
 # ---------------------------------------------------------------------------
 def search_af_attributes(base_url: str, af_server: str, name: str = "",
-                         description: str = "") -> pd.DataFrame:
+                         description: str = "", database: str = "") -> pd.DataFrame:
     """AF attribute search. Columns: tagnames (= full attribute path — the
     extraction identity), descriptions, units, type, path (element path).
-    The JSL side renders `path` as a collapsible element tree."""
+    v4.1: `database` restricts the search to one AF database (AF_Database
+    server-list field). The JSL side renders `path` as an element tree."""
     base = normalize_base_url("PI", base_url)
-    return _af.search_attributes(base, af_server, name, description)
+    return _af.search_attributes(base, af_server, name, description,
+                                 database=database)
+
+
+def pi_discover(base_url: str) -> pd.DataFrame:
+    """v4.1: enumerate DA servers, AF servers and AF databases exposed by a
+    PI Web API endpoint (GET /dataservers + /assetservers + their databases).
+    Returns ready server-list rows: site / server / Type / WebAPI_URL /
+    PI_AF_Server / AF_Database — the GUI's 'Load servers from Web API' button."""
+    base = normalize_base_url("PI", base_url)
+    return _af.discover_servers(base)
 
 
 def pi_search(base_url: str, da_server: str, af_server: str = "",
               name: str = "", description: str = "",
-              include_da: int = 1) -> pd.DataFrame:
-    """Combined PI search: AF attributes (when an AF server is configured)
-    plus/or plain DA points.
+              include_da: int = 1, af_database: str = "",
+              af_only: int = 0) -> pd.DataFrame:
+    """Combined PI search: AF attributes and/or plain DA points.
 
-    GRACEFUL DEGRADATION (v4.0.1): an AF failure (wrong AF server name, no AF
-    deployed, blocked endpoints) must not kill the search — it is logged with
-    the reason and the DA point search still runs, so the add-in behaves at
-    least as well as v3. Only when every applicable search fails does the
-    error propagate.
+    v4.1 — two explicit modes driven by the GUI's "PI AF search" checkbox:
+    - af_only=1: ATTRIBUTE search. Runs only against AF (restricted to
+      `af_database` when given) and FAILS LOUDLY — no silent degradation to
+      DA points, because the user explicitly asked for attributes and needs
+      to see why the AF search failed (wrong server name, blocked endpoint,
+      missing database...).
+    - af_only=0: plain DA point search, exactly like v3. The v4.0 behavior
+      (AF automatically searched when configured, degrade to DA on failure)
+      is kept only when include_da=1 AND an AF server is configured, for
+      backward compatibility with recalled reports.
     """
+    if int(af_only):
+        if not (af_server or "").strip():
+            raise RuntimeError(
+                "PI AF search requested but no PI_AF_Server is configured for "
+                "this server (set it in the server list or 'Edit server address').")
+        return _af.search_attributes(
+            normalize_base_url("PI", base_url), af_server, name, description,
+            database=af_database)
+
     parts: list[pd.DataFrame] = []
     af_error = None
-    if (af_server or "").strip():
+    if (af_server or "").strip() and int(include_da) == 0:
+        # legacy v4.0 call shape (include_da=0 used to mean "AF only"):
+        # keep searching AF but degrade gracefully
         try:
             parts.append(_af.search_attributes(
-                normalize_base_url("PI", base_url), af_server, name, description))
+                normalize_base_url("PI", base_url), af_server, name, description,
+                database=af_database))
         except AuthRequired:
             raise                     # credentials issue: the dialog must handle it
         except Exception as ex:       # noqa: BLE001 - degrade, don't die

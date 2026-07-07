@@ -278,7 +278,23 @@ EXPR_DATA_EXTRACTION = Expr(
 		// Tagtype
 			Column( tblAllTags, TagWithDesc ) << Set Property( "tagtype", TagType_AA[TagWithDesc] );
 		);
-		
+
+		// v4.1: AF attribute metadata (consumed by the column organizer and
+		// future scripts). For a wide extraction the identity is the full AF
+		// path -> split it; for a stacked one the column IS the attribute name.
+		Try(
+			str.identity_i = Char( TagExtract_AA[TagWithDesc] );
+			If( Contains( str.identity_i, "|" ),
+				Column( tblAllTags, TagWithDesc ) << Set Property( "tag_attribute", Word( -1, str.identity_i, "|" ) );
+				Column( tblAllTags, TagWithDesc ) << Set Property( "af_element", Word( 1, str.identity_i, "|" ) );
+				Column( tblAllTags, TagWithDesc ) << Set Property( "af_path", str.identity_i );
+			,
+				If( Try( int.StackAssets, 0 ) == 1 & ServerType == "PI",
+					Column( tblAllTags, TagWithDesc ) << Set Property( "tag_attribute", TagWithDesc )
+				)
+			);
+		);
+
 		// Column format: 6 decimals by default for continuous tags
 		Try(
 			If( !(Contains( PreviewTags, TagType_AA[TagWithDesc] )),
@@ -290,6 +306,17 @@ EXPR_DATA_EXTRACTION = Expr(
 	// Name and properties for TS and TS_UTC colums	(no tagname property)
 	Column( tblAllTags, "TS" ) << Set Property( "addin_colname", "TS" );
 	Column( tblAllTags, "TS_UTC" ) << Set Property( "addin_colname", "TS_UTC" );
+
+	// v4.1 stacked output: label the hierarchy columns for downstream tools
+	Try(
+		Try( Column( tblAllTags, "Asset" ) << Set Property( "addin_colname", "Asset" ) );
+		lst_out_cols = tblAllTags << Get Column Names( "String" );
+		For( i_lv = 1, i_lv <= N Items( lst_out_cols ), i_lv++,
+			If( Starts With( lst_out_cols[i_lv], "Level " ),
+				Column( tblAllTags, lst_out_cols[i_lv] ) << Set Property( "addin_colname", lst_out_cols[i_lv] )
+			)
+		);
+	);
 	
 	
 	/* 3.6 Summary table */
