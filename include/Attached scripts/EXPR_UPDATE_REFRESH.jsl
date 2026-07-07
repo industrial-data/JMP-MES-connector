@@ -42,8 +42,12 @@ EXPR_UPDATE_REFRESH_UI = Expr(
 	DevY = 874;
 	ScreenX = WindowSize[1];
 	ScreenY = WindowSize[2];
-	RatioX = ScreenX / DevX;
-	RatioY = ScreenY / DevY;
+	/* Match the main window's scaling (LAUNCH_APPLICATION.jsl): never scale
+	   above the designed layout and shrink by the same ScaleGUI factor —
+	   otherwise this window comes out much bigger than the main GUI. */
+	ScaleGUI = 0.7;
+	RatioX = Min( ScreenX / DevX, 1 ) * ScaleGUI;
+	RatioY = Min( ScreenY / DevY, 1 ) * ScaleGUI;
 	
 	
 /* 1.2. Source JSL dependencies */
