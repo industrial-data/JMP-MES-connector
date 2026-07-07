@@ -66,11 +66,12 @@ f_REST_CheckConfigured = Function( {},
          rely on Python Send() for this critical step.
       3. Imports mes_connector inside python and reports the REAL outcome
          back ("OK ..." or "IMPORT_ERROR: ..."), which goes to the JMP log.
-      4. If requests is missing (JMP's python is an ISOLATED environment
-         with its own site-packages — the validated notebook ran in an
-         external Anaconda), installs it via Python Install Packages and
-         retries. On Windows it also tries requests-negotiate-sspi so SSO
-         works; failing that, the login dialog covers auth.
+      4. If a core dependency is missing (JMP's python is an ISOLATED
+         environment with its own site-packages — a fresh JMP install has
+         no requests/pandas/numpy), installs the required set on demand via
+         Python Install Packages and retries. On Windows it also tries
+         requests-negotiate-sspi so SSO works; failing that, the login
+         dialog covers auth.
       5. Round-trip-tests Python Send/Get, since every later bridge call
          relies on that mechanism.
 */
@@ -128,9 +129,13 @@ except Exception as _ex:
 	f_Log( "INFO", "Python init - " || Char( rest_status ), "REST" );
 
 	// --- 4) Missing dependency? install into JMP's site-packages --------
-	If( Contains( Char( rest_status ), "No module named 'requests'" ) | Contains( Char( rest_status ), "No module named 'urllib3'" ),
-		f_Log( "WARNING", "JMP's python environment lacks 'requests' - installing it now (needs internet/proxy access)...", "REST" );
-		Try( Python Install Packages( "requests" ) );
+	// ANY missing core module surfaces as "No module named '...'" — pandas
+	// and numpy are just as mandatory as requests (mes_connector imports
+	// them at the top level). Installing the three roots lets pip pull the
+	// whole dependency tree (urllib3, dateutil, ...) in one shot.
+	If( Contains( Char( rest_status ), "No module named" ),
+		f_Log( "WARNING", "JMP's python environment lacks core packages (" || Char( rest_status ) || ") - installing requests, pandas, numpy now (needs internet/proxy access)...", "REST" );
+		Try( Python Install Packages( "requests pandas numpy" ) );
 		If( Host is( "Windows" ),
 			// Optional: enables silent Windows SSO; the login dialog covers auth if this fails
 			Try( Python Install Packages( "requests-negotiate-sspi" ) )
@@ -141,7 +146,13 @@ except Exception as _ex:
 	);
 
 	If( !Starts With( Char( rest_status ), "OK" ),
-		f_DialogError( "Python setup failed: " || Char( rest_status ) )
+		f_DialogError(
+			"Python setup failed: " || Char( rest_status ) ||
+			If( Contains( Char( rest_status ), "No module named" ),
+				"\!N\!NJMP could not install the required python packages (requests, pandas, numpy). Check internet/proxy access and retry - the JMP log shows the pip output.",
+				""
+			)
+		)
 	);
 
 	// Optional packages: keyring (remember passwords in the OS credential
