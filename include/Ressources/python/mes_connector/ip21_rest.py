@@ -123,34 +123,43 @@ def _json_rows_to_dataframe(text: str) -> pd.DataFrame:
 
     data = doc.get("data", doc) if isinstance(doc, dict) else doc
 
-    # Aspen reports SQL/engine errors inside the payload, not via HTTP status
-    if isinstance(data, dict):
-        for key in ("er", "err", "error", "Error"):
-            msg = data.get(key)
+    # Live-server shape: "data" is a LIST of per-statement results (one entry
+    # per <SQL> in the batch), each entry a dict with "r" (result marker),
+    # "cols" (0-BASED column indices i + names n) and "rows" ([{fld:[{i,v}]}]).
+    # We send one statement, so there is normally one entry; iterate anyway.
+    entries = data if isinstance(data, list) else [data]
+
+    records = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        # Aspen reports SQL/engine errors inside the payload, not via HTTP status
+        for key in ("er", "err", "error", "Error", "message", "Message"):
+            msg = entry.get(key)
             if msg:
                 raise RuntimeError(f"IP21 REST error: {msg}")
 
-    if not isinstance(data, dict):
+        # column index -> column name (indices are 0-based on live servers;
+        # we key by the actual "i" values so either base works)
+        names: dict[int, str] = {}
+        cols = entry.get("cols") or entry.get("columns") or []
+        for idx, c in enumerate(cols):
+            if isinstance(c, dict):
+                names[int(c.get("i", idx))] = str(c.get("n") or c.get("name") or f"col_{idx}")
+
+        for row in entry.get("rows", []):
+            flds = row.get("fld", []) if isinstance(row, dict) else []
+            rec = {}
+            for fld in flds:
+                i = int(fld.get("i", len(rec)))
+                # fld items sometimes carry their own name key; prefer metadata
+                name = names.get(i) or str(fld.get("n") or f"col_{i}")
+                rec[name] = fld.get("v")
+            if rec:
+                records.append(rec)
+
+    if not records and not any(isinstance(e, dict) and ("rows" in e or "cols" in e) for e in entries):
         raise RuntimeError(f"IP21 REST: unexpected payload shape: {text[:300]!r}")
-
-    # column index -> column name (from data.cols metadata when present)
-    names: dict[int, str] = {}
-    cols = data.get("cols") or data.get("columns") or []
-    for idx, c in enumerate(cols, start=1):
-        if isinstance(c, dict):
-            names[int(c.get("i", idx))] = str(c.get("n") or c.get("name") or f"col_{idx}")
-
-    records = []
-    for row in data.get("rows", []):
-        flds = row.get("fld", []) if isinstance(row, dict) else []
-        rec = {}
-        for f in flds:
-            i = int(f.get("i", len(rec) + 1))
-            # fld items sometimes carry their own name key; prefer metadata
-            name = names.get(i) or str(f.get("n") or f"col_{i}")
-            rec[name] = f.get("v")
-        if rec:
-            records.append(rec)
 
     df = pd.DataFrame(records)
     if not df.empty and all(str(c).startswith("col_") for c in df.columns):
