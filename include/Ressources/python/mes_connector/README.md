@@ -85,7 +85,11 @@ hid every AF misconfiguration); unchecked, it is a plain DA point search like
 v3. The search runs against `/assetdatabases/{id}/elementattributes`
 (`searchFullHierarchy=true`) and is restricted to ONE database when the server
 list provides `AF_Database` (recommended; a typo'd database name raises with
-the list of available ones). Results are identified by the full AF path
+the list of available ones). Paging runs SEARCH_WORKERS (5) pages in parallel
+after a single probe page (the v4.0 one-page-at-a-time loop took 15+ minutes
+on big databases) and results are capped at MAX_SEARCH_RESULTS (10000, a JMP
+19 Tree Box renders that in ~0.5 s) — a log warning tells the user to refine
+the filter when the cap is hit. Results are identified by the full AF path
 (`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders them as an
 element-hierarchy Tree Box (root = database) labeled
 `attr {description} [units] {type}`; the path-suffixed label remains the

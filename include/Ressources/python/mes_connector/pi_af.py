@@ -130,6 +130,72 @@ def discover_servers(base_url: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Attribute search (the AF-mode search bar)
 # ---------------------------------------------------------------------------
+SEARCH_PAGE = 1000        # attributes per elementattributes request
+SEARCH_WORKERS = 5        # pages fetched in parallel — same pool size as the
+                          # extraction workers (do not raise without notifying
+                          # the PI administrator)
+MAX_SEARCH_RESULTS = 10000  # safety cap: an empty name filter on a big AF
+                            # database would otherwise page for many minutes
+                            # (and the GUI tree could not display it anyway)
+
+
+def _search_db_attributes(s, base: str, db_webid: str, nf: str,
+                          budget: int) -> list[dict]:
+    """Page through one database's elementattributes, SEARCH_WORKERS pages at
+    a time (waves), stopping at the first short/empty page or at `budget`.
+
+    The v4.0 loop fetched pages strictly one by one with no result cap, so an
+    unfiltered search on a large database ran for 15+ minutes with no error —
+    the PI Web API answers each deep startIndex page slowly, and there were
+    thousands of them.
+    """
+
+    def _fetch(start_index: int) -> list[dict]:
+        params = {
+            "searchFullHierarchy": "true",
+            "startIndex": start_index,
+            "maxCount": SEARCH_PAGE,
+            "selectedFields": "Items.WebId;Items.Name;Items.Path;Items.Description;"
+                              "Items.DefaultUnitsName;Items.Type",
+        }
+        if nf:
+            params["attributeNameFilter"] = nf
+        r = s.get(f"{base}/assetdatabases/{db_webid}/elementattributes",
+                  params=params, timeout=120)
+        _pi._log_url(r)
+        r = check_response(r)
+        return r.json().get("Items", [])
+
+    out: list[dict] = []
+    next_start = 0
+    first_wave = True
+    while len(out) < budget:
+        pages_left = -(-(budget - len(out)) // SEARCH_PAGE)  # ceil division
+        # First wave is a single probe page: most filtered searches fit in one
+        # page (or are empty), so going wide immediately would waste requests.
+        # Once page 0 comes back full, later waves run SEARCH_WORKERS pages in
+        # parallel — that is what makes a full unfiltered index fast.
+        width = 1 if first_wave else max(1, min(SEARCH_WORKERS, pages_left))
+        wave = [next_start + i * SEARCH_PAGE for i in range(width)]
+        if len(wave) == 1:
+            pages = [_fetch(wave[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=len(wave)) as pool:
+                pages = list(pool.map(_fetch, wave))
+        short = False
+        for pg in pages:
+            out.extend(pg)
+            if len(pg) < SEARCH_PAGE:   # end of the result set is inside this wave
+                short = True
+                break
+        if short:
+            break
+        next_start = wave[-1] + SEARCH_PAGE
+        first_wave = False
+        time.sleep(PAGING_DELAY_S)
+    return out[:budget]
+
+
 def search_attributes(base_url: str, af_server: str, name_filter: str = "",
                       description_filter: str = "",
                       max_results: int | None = None,
@@ -137,7 +203,9 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
     """Search attributes across the AF server's databases.
 
     v4.1: `database` (server list AF_Database field) restricts the search to
-    one database — recommended, since AF servers commonly host many.
+    one database — recommended, since AF servers commonly host many. Results
+    are capped at MAX_SEARCH_RESULTS (a warning is printed to the JMP log when
+    the cap is hit — refine the name filter or scope the database).
 
     Returns the GUI contract columns: tagnames / descriptions / units / type /
     path — where `tagnames` is the FULL attribute path (unique identity used
@@ -153,32 +221,19 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
     if nf and "*" not in nf and "?" not in nf:
         nf = f"*{nf}*"
 
+    cap = MAX_SEARCH_RESULTS if max_results is None else int(max_results)
     rows: list[dict] = []
     for db in _databases(base, af_webid, database):
-        start_index, page = 0, 1000
-        while max_results is None or len(rows) < max_results:
-            count = page if max_results is None else min(page, max_results - len(rows))
-            params = {
-                "searchFullHierarchy": "true",
-                "startIndex": start_index,
-                "maxCount": count,
-                "selectedFields": "Items.WebId;Items.Name;Items.Path;Items.Description;"
-                                  "Items.DefaultUnitsName;Items.Type",
-            }
-            if nf:
-                params["attributeNameFilter"] = nf
-            r = s.get(f"{base}/assetdatabases/{db['WebId']}/elementattributes",
-                      params=params, timeout=120)
-            _pi._log_url(r)
-            r = check_response( r )
-            items = r.json().get("Items", [])
-            if not items:
-                break
-            rows.extend(items)
-            start_index += len(items)
-            if len(items) < count:
-                break
-            time.sleep(PAGING_DELAY_S)
+        t0 = time.monotonic()
+        db_rows = _search_db_attributes(s, base, db["WebId"], nf, cap - len(rows))
+        rows.extend(db_rows)
+        print(f"[af-search] {db.get('Name', '?')}: {len(db_rows)} attributes "
+              f"in {time.monotonic() - t0:.1f}s", flush=True)
+        if len(rows) >= cap:
+            print(f"[af-search] RESULT CAP REACHED ({cap} attributes) - the list "
+                  "is truncated. Refine the tag name filter, or set AF_Database "
+                  "in the server list to scope the search.", flush=True)
+            break
 
     if not rows:
         return pd.DataFrame(columns=["tagnames", "descriptions", "units", "type", "path"])
