@@ -20,9 +20,9 @@ plain <SQL> XML element as the request body — nothing around it:
          m="30000" to="90" s="1"><![CDATA[ ...SQL text... ]]></SQL>
 
 CAUTION — do not add square brackets around it. The JSL reference script
-looks like it sends [<SQL ...>] but that is an illusion: in JSL, "\[ ... ]\"
-inside a double-quoted string is the RAW-STRING ESCAPE SYNTAX (the brackets
-are string delimiters, not content). Sending a leading '[' makes the
+looks like it sends [<SQL ...>] but that is an illusion: the JSL escaped-
+string syntax backslash-bracket ... bracket-backslash is a RAW-STRING ESCAPE
+(the brackets are string delimiters, not content). Sending a leading '[' makes the
 server-side XmlLite parser fail with 200 + 'XML Error( Read ) WC_E_SYNTAX'.
 
 - c  : the ODBC-style connection string used SERVER-SIDE by the REST service
