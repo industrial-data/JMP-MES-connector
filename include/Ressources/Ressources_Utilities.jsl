@@ -2624,39 +2624,70 @@ f_MoveDown = Function( {lstTags, Tag},
 
 
 /*
+    f_MatchSearchPattern Function
+
+    Case-insensitive wildcard match used by the search-bar filters. Spaces and
+    '*' both act as wildcards: the pattern is split into tokens which must all
+    appear in the item, in order ("tic 34" == "tic*34" == *tic*34*). A pattern
+    with no tokens (empty, only spaces/'*') matches everything.
+
+    @param itemText: The list entry to test (e.g. "tag (description) [unit]").
+    @param searchText: The user-entered pattern.
+
+    @return: 1 if the item matches, 0 otherwise.
+*/
+f_MatchSearchPattern = Function( {itemText, searchText},
+	{Default Local},
+	item = Lowercase( itemText );
+	tokens = Words( Lowercase( searchText ), " *" );
+	pos = 1;
+	match = 1;
+	For( k = 1, k <= N Items( tokens ), k++,
+		found = Contains( item, tokens[k], pos );
+		If( found == 0,
+			match = 0;
+			Break();
+		);
+		pos = found + Length( tokens[k] );
+	);
+	match;
+);
+
+/*
     f_SearchBarTag Function
-    
-    
+
+
     This function is used to filter and display the columns in the TAB Data Extraction based on user-entered search text.
-    
+    Spaces and '*' in the search text act as wildcards (see f_MatchSearchPattern).
+
     @param this: The reference to the TAB Data Extraction.
     @param searchText: The text entered by the user in the search bar.
-    
+
     @return: The filtered list of columns.
 */
-f_SearchBarTag = Function( {this, searchText}, 
+f_SearchBarTag = Function( {this, searchText},
 
 	Try(
 		item_list = TagList_DescUnit;  // Only possible if the button "Find Tag" was pressed
 		// only attempt to filter if there is any text
-		If( searchText != "", 
+		If( searchText != "",
 		// new list for groups that match searchText
 			filtered_items = {};
 		// Check if each group matches the given text
-			For( i = 1, i <= N Items( item_list ), i++, 
-			// Insert to our list if it contains our search text (case insensitive)
-				If( Contains( Lowercase( item_list[i] ), Lowercase( searchText ) ),
+			For( i = 1, i <= N Items( item_list ), i++,
+			// Insert to our list if it matches the search pattern (wildcards: space or *)
+				If( f_MatchSearchPattern( item_list[i], searchText ),
 					Insert Into( filtered_items, item_list[i] )
 				)
 			);
-		, 
+		,
 	// else show all groups
 			filtered_items = item_list
 		);
 		lstAvailableTags << Set Items( filtered_items );
 		txtbox_nbTags << Set text( " [ " || Char( N Items( filtered_items ) ) || " ]" );
-		
-		
+
+
 	)
 );		// end filter_items function
 
@@ -2666,24 +2697,25 @@ f_SearchBarTag = Function( {this, searchText},
     
     
     This function is used to filter and display the columns in the TAB Filters based on user-entered search text.
-    
+    Spaces and '*' in the search text act as wildcards (see f_MatchSearchPattern).
+
     @param this: The reference to the TAB Filters.
     @param searchText: The text entered by the user in the search bar.
-    
+
     @return: The filtered list of columns.
 */
-f_SearchBarFilter = Function( {this, searchText}, 
+f_SearchBarFilter = Function( {this, searchText},
 
 	Try(
 		item_list = lstbox_SelectedTags << Get Items();
 	// only attempt to filter if there is any text
-		If( searchText != "", 
+		If( searchText != "",
 		// new list for groups that match searchText
 			filtered_items = {};
 		// Check if each group matches the given text
-			For( i = 1, i <= N Items( item_list ), i++, 
-			// Insert to our list if it contains our search text (case insensitive)
-				If( Contains( Lowercase( item_list[i] ), Lowercase( searchText ) ),
+			For( i = 1, i <= N Items( item_list ), i++,
+			// Insert to our list if it matches the search pattern (wildcards: space or *)
+				If( f_MatchSearchPattern( item_list[i], searchText ),
 					Insert Into( filtered_items, item_list[i] )
 				)
 			);
