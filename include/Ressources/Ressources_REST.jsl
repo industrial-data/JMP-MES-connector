@@ -539,10 +539,21 @@ f_AF_CollectLeafData = Function( {node, lstOut},
 );
 
 
+/* Expanding a node forces a tree relayout, so expand-all on a big hierarchy
+   (thousands of element nodes) froze the GUI — especially since the filter
+   rebuilds the tree on EVERY keystroke. Trees therefore start COLLAPSED (the
+   user opens what they need); only a small filtered result auto-expands. */
+AF_ExpandMax = 300;
+
 /* Rebuild the LEFT tree (search results) applying the search-bar filter to
    the attribute labels. Elements without any matching attribute disappear
    (the tree is built only from the matching rows). */
 f_AF_ShowResults = Function( {searchText},
+
+	// Per-keystroke guard: identical filter text (duplicate text-changed
+	// events, clear button on an empty box...) must not rebuild the tree.
+	If( searchText == Try( str.AF_LastFilter, "__unset__" ), Return( 0 ) );
+	str.AF_LastFilter = searchText;
 
 	Try(
 		keep_paths = {};
@@ -564,9 +575,13 @@ f_AF_ShowResults = Function( {searchText},
 			{lstRoots, aa_nodes} = f_AF_BuildTreeNodes( keep_paths, keep_pretty, keep_data );
 			afTreeHolder << Append( tree_af = Tree Box( lstRoots, Size( 550 * RatioX, 272 * RatioY ) ) );
 			tree_af << Set Multiselect( 1 );
-			aa_keys = aa_nodes << Get Keys;
-			For( k = 1, k <= N Items( aa_keys ), k++,
-				Try( tree_af << Expand( aa_nodes[aa_keys[k]] ) )
+			// Collapsed by default. A small ACTIVE filter result is the
+			// exception: the user is hunting for those hits, show them.
+			If( Trim( searchText ) != "" & n_hits <= AF_ExpandMax,
+				aa_keys = aa_nodes << Get Keys;
+				For( k = 1, k <= N Items( aa_keys ), k++,
+					Try( tree_af << Expand( aa_nodes[aa_keys[k]] ) )
+				);
 			);
 		);
 		afTreeOutline << Set Title( "Attribute hierarchy (" || Char( n_hits ) || " attributes)" );
@@ -607,9 +622,13 @@ f_AF_ShowSelection = Function( {},
 			{lstRoots, aa_nodes} = f_AF_BuildTreeNodes( sel_paths, sel_pretty, sel_data );
 			selTreeHolder << Append( tree_sel = Tree Box( lstRoots, Size( 550 * RatioX, 272 * RatioY ) ) );
 			tree_sel << Set Multiselect( 1 );
-			aa_keys = aa_nodes << Get Keys;
-			For( k = 1, k <= N Items( aa_keys ), k++,
-				Try( tree_sel << Expand( aa_nodes[aa_keys[k]] ) )
+			// The selection is what the user just picked: keep it visible
+			// (expanded) while it stays small; collapse when it gets big
+			If( N Items( sel_paths ) <= AF_ExpandMax,
+				aa_keys = aa_nodes << Get Keys;
+				For( k = 1, k <= N Items( aa_keys ), k++,
+					Try( tree_sel << Expand( aa_nodes[aa_keys[k]] ) )
+				);
 			);
 		);
 		selTreeOutline << Set Title( "Selected attributes (" || Char( N Items( sel_paths ) ) || ")" );

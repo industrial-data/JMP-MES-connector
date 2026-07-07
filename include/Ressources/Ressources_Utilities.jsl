@@ -3385,7 +3385,9 @@ f_button.find_tags = Function( {},
 			Insert Into( AF_Res_Flat, lst_af_fl[i_af] );
 		)
 	);
-	// Render the results tree (clears the search-bar filter view)
+	// Render the results tree. New search results MUST render even when the
+	// filter text is unchanged — defeat f_AF_ShowResults' rebuild guard.
+	str.AF_LastFilter = "__FORCE_REBUILD__";
 	Try( f_AF_ShowResults( Try( txt_SearchBarTag << Get Text, "" ) ) );
 
 
