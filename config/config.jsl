@@ -2,7 +2,7 @@
  * General Information
  *
  * Script Title    : Config
- * Version         : 3.0
+ * Version         : 4.0
  *
  * Description:
  * This script configurates global parameters
@@ -60,7 +60,7 @@ If( !Directory Exists( str.PathAppState ),
 
 // =====  2.2  SERVERS LIST PATH =====  //
 //strPathServerlist = "$DOCUMENTS/MES_servers_list.xlsx";
-strPathServerlist = "https://github.com/industrial-data/JMP-MES-connector/raw/refs/heads/version-3.0/MES_servers_list.xlsx";
+strPathServerlist = "https://github.com/industrial-data/JMP-MES-connector/raw/refs/heads/version-4.0/MES_servers_list.xlsx";
 
 
 // =====  2.3 USER GUIDE PATH =====  //
