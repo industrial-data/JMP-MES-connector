@@ -130,14 +130,20 @@ def _json_rows_to_dataframe(text: str) -> pd.DataFrame:
     entries = data if isinstance(data, list) else [data]
 
     records = []
+    all_columns: list[str] = []   # SELECT columns in order, from cols metadata
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        # Aspen reports SQL/engine errors inside the payload, not via HTTP status
+        rows = entry.get("rows", [])
+        # Aspen reports SQL/engine errors inside the payload, not via HTTP
+        # status. Only treat a message as fatal when the entry carries NO
+        # rows — some servers attach informational messages to good results.
         for key in ("er", "err", "error", "Error", "message", "Message"):
             msg = entry.get(key)
-            if msg:
+            if msg and not rows:
                 raise RuntimeError(f"IP21 REST error: {msg}")
+            if msg:
+                print(f"[ip21] server message: {msg}", flush=True)
 
         # column index -> column name (indices are 0-based on live servers;
         # we key by the actual "i" values so either base works)
@@ -145,14 +151,20 @@ def _json_rows_to_dataframe(text: str) -> pd.DataFrame:
         cols = entry.get("cols") or entry.get("columns") or []
         for idx, c in enumerate(cols):
             if isinstance(c, dict):
-                names[int(c.get("i", idx))] = str(c.get("n") or c.get("name") or f"col_{idx}")
+                name = str(c.get("n") or c.get("name") or f"col_{idx}")
+                names[int(c.get("i", idx))] = name
+                if name not in all_columns:
+                    all_columns.append(name)
 
-        for row in entry.get("rows", []):
+        for row in rows:
             flds = row.get("fld", []) if isinstance(row, dict) else []
-            rec = {}
+            # Start every record with ALL declared columns (None): servers may
+            # omit fld entries for null values, and the JSL layer checks the
+            # column COUNT of the result — missing columns broke extraction
+            # with a bogus 'Server connection failed'.
+            rec = {name: None for name in (names[i] for i in sorted(names))}
             for fld in flds:
                 i = int(fld.get("i", len(rec)))
-                # fld items sometimes carry their own name key; prefer metadata
                 name = names.get(i) or str(fld.get("n") or f"col_{i}")
                 rec[name] = fld.get("v")
             if rec:
@@ -161,7 +173,16 @@ def _json_rows_to_dataframe(text: str) -> pd.DataFrame:
     if not records and not any(isinstance(e, dict) and ("rows" in e or "cols" in e) for e in entries):
         raise RuntimeError(f"IP21 REST: unexpected payload shape: {text[:300]!r}")
 
-    df = pd.DataFrame(records)
+    if records:
+        df = pd.DataFrame(records)
+        # keep the SELECT's column order
+        df = df[[c for c in all_columns if c in df.columns]
+                + [c for c in df.columns if c not in all_columns]]
+    else:
+        # zero rows: still expose the SELECT's columns so the JSL layer sees
+        # the right shape (e.g. the tagtype query returning no match)
+        df = pd.DataFrame(columns=all_columns)
+        print(f"[ip21] query returned 0 rows (payload starts: {text[:200]!r})", flush=True)
     if not df.empty and all(str(c).startswith("col_") for c in df.columns):
         # No column metadata anywhere: surface it loudly — the JSL layer needs
         # the SELECT aliases (tagnames/TS/...) to keep working.

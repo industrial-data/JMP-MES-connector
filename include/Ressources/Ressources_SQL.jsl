@@ -205,18 +205,18 @@ f_SQL_GET_TAGTYPE = Function( {Tag, ServerType},
 		SQL_tag = Substitute( __SQL_TAGTYPE_IP21, "VAR_TAGNAME", Tag );
 		dt_tagtable = Try(
 			f_IP21_REST_SQL( SQL_tag ),
-			f_DialogError( "No tags found" )
+			f_DialogError( "Tag type lookup failed for '" || Char( Tag ) || "' (see log for the request)" )
 		);
-		Try(
-			If( N Items( dt_tagtable << Get column names() ) != 1,
-				Close( dt_tagtable, "NoSave" );
-				f_DialogError( "No tags found" );
-			)
-		,
+		// Robustness: report clearly when the tag does not exist (0 rows) or
+		// the response lost the column name, instead of a JSL subscript error
+		If( N Rows( dt_tagtable ) == 0,
 			Close( dt_tagtable, "NoSave" );
-			f_DialogError( "No tags found" );
+			f_DialogError( "No tagtype found: tag '" || Char( Tag ) || "' does not exist on this server (check the exact name in the log)" );
 		);
-		TagTypeRslt = Column( dt_tagtable, "tagtype" )[1];
+		TagTypeRslt = Try(
+			Column( dt_tagtable, "tagtype" )[1],
+			Try( Column( dt_tagtable, 1 )[1], Empty() )   // fallback: first column
+		);
 		Close( dt_tagtable, "NoSave" );
 	);
 
