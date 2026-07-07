@@ -348,8 +348,9 @@ WinTag = New Window( "IP21PI Data Retrieval",
 										)
 									),
 									Border Box( top( 10 ), Left( 15 ),
-										Lineup Ruler Box(
-											Widths( {120 * RatioX, 200 * RatioY} ),
+										/* No forced column widths (the old 120px ruler clipped the labels):
+										   the label column sizes itself to the text; only the entry boxes get
+										   an explicit width, so long values wrap instead of being cut off. */
 											panel_ServerAdress = Outline Box( "Server details",
 												Panel Box( "",
 													/* v3.0 simplified server details (REST is the only transport):
@@ -360,13 +361,13 @@ WinTag = New Window( "IP21PI Data Retrieval",
 													     /ProcessData/AtProcessDataREST.dll automatically.
 													   - PI AF server (optional, PI only): reserved for the future
 													     AF attribute search (collapsible element hierarchy). */
-													Lineup Box( N Col( 2 ),
-														Text Box( "Server name:" ),
-														txtbox_ServerAddress = Text Edit Box( "" ),
-														Text Box( "WebAPI URL:" ),
-														txtbox_WebAPIURL = Text Edit Box( "" ),
-														Text Box( "PI AF server:" ),
-														txtbox_PIAFServer = Text Edit Box( "" ),
+													Lineup Box( N Col( 2 ), Spacing( 6 ),
+														Text Box( "Server name (mandatory):" ),
+														txtbox_ServerAddress = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
+														Text Box( "Web API URL (mandatory):" ),
+														txtbox_WebAPIURL = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
+														Text Box( "PI AF server (optional):" ),
+														txtbox_PIAFServer = Text Edit Box( "", <<Set Width( 180 * RatioX ) ),
 														rdbox_ServerType = Radio Box(
 															{"IP21", "PI"}, 
 															/* If user changes server type, all filters registered will be removed as they are built differently between IP21 and PI */
@@ -378,7 +379,6 @@ WinTag = New Window( "IP21PI Data Retrieval",
 													)
 												)
 											)
-										)
 									),
 									Border Box( top( 15 ), Left( 15 ), Bottom( 8 ),
 										/* v-GUI: replaces the unclear "Name data file" box. Loads a
