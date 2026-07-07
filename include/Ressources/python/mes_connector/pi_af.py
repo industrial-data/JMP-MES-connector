@@ -14,9 +14,14 @@ filter) instead of rebuilding their analysis.
 PI Web API endpoints used (all GET):
 - /assetservers?name=<af_server>                    -> AF server WebId
 - /assetservers/{webid}/assetdatabases              -> databases
-- /assetdatabases/{webid}/elementattributes         -> attribute search across
-      the full element hierarchy (searchFullHierarchy=true). This is the
-      server-side search behind the GUI search bar in AF mode.
+- /assetdatabases/{webid}/elements                  -> element hierarchy
+      (searchFullHierarchy=true, WebId+Path only — cheap: no attribute loading)
+- /elements/{webid}/attributes                      -> per-element attributes,
+      name-filtered server-side; fanned out over SEARCH_WORKERS threads.
+      Together these two power the GUI search bar in AF mode. Deliberately
+      NOT /assetdatabases/{id}/elementattributes: that traversal loads every
+      attribute of the whole hierarchy per request (and per page!) and took
+      15-30 minutes on production-size databases.
 - /attributes?path=\\\\AF\\DB\\Element|Attribute    -> attribute WebId + Type
 - /streams/{webid}/...                              -> data (same streams
       controller as DA points — attribute WebIds are streamable), reused from
@@ -130,38 +135,29 @@ def discover_servers(base_url: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Attribute search (the AF-mode search bar)
 # ---------------------------------------------------------------------------
-SEARCH_PAGE = 1000        # attributes per elementattributes request
-SEARCH_WORKERS = 5        # pages fetched in parallel — same pool size as the
+SEARCH_PAGE = 1000        # items per paged request
+SEARCH_WORKERS = 5        # parallel requests — same pool size as the
                           # extraction workers (do not raise without notifying
                           # the PI administrator)
-MAX_SEARCH_RESULTS = 10000  # safety cap: an empty name filter on a big AF
-                            # database would otherwise page for many minutes
-                            # (and the GUI tree could not display it anyway)
+MAX_SEARCH_RESULTS = 10000  # attribute cap: the GUI tree renders this in ~0.5s;
+                            # more is unusable anyway — refine the filter
+MAX_SEARCH_ELEMENTS = 20000  # hierarchy-size cap (elements per database)
+PROGRESS_EVERY = 250      # elements between progress prints to the JMP log
 
 
-def _search_db_attributes(s, base: str, db_webid: str, nf: str,
-                          budget: int) -> list[dict]:
-    """Page through one database's elementattributes, SEARCH_WORKERS pages at
-    a time (waves), stopping at the first short/empty page or at `budget`.
+def _list_elements(s, base: str, db_webid: str, cap: int) -> list[dict]:
+    """All elements of a database (WebId + Path), wave-parallel paging.
 
-    The v4.0 loop fetched pages strictly one by one with no result cap, so an
-    unfiltered search on a large database ran for 15+ minutes with no error —
-    the PI Web API answers each deep startIndex page slowly, and there were
-    thousands of them.
-    """
+    Element enumeration does NOT load attribute objects, so it is far cheaper
+    than the elementattributes traversal (see _search_db_attributes)."""
 
     def _fetch(start_index: int) -> list[dict]:
-        params = {
-            "searchFullHierarchy": "true",
-            "startIndex": start_index,
-            "maxCount": SEARCH_PAGE,
-            "selectedFields": "Items.WebId;Items.Name;Items.Path;Items.Description;"
-                              "Items.DefaultUnitsName;Items.Type",
-        }
-        if nf:
-            params["attributeNameFilter"] = nf
-        r = s.get(f"{base}/assetdatabases/{db_webid}/elementattributes",
-                  params=params, timeout=120)
+        r = s.get(f"{base}/assetdatabases/{db_webid}/elements",
+                  params={"searchFullHierarchy": "true",
+                          "startIndex": start_index,
+                          "maxCount": SEARCH_PAGE,
+                          "selectedFields": "Items.WebId;Items.Path"},
+                  timeout=120)
         _pi._log_url(r)
         r = check_response(r)
         return r.json().get("Items", [])
@@ -169,12 +165,8 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
     out: list[dict] = []
     next_start = 0
     first_wave = True
-    while len(out) < budget:
-        pages_left = -(-(budget - len(out)) // SEARCH_PAGE)  # ceil division
-        # First wave is a single probe page: most filtered searches fit in one
-        # page (or are empty), so going wide immediately would waste requests.
-        # Once page 0 comes back full, later waves run SEARCH_WORKERS pages in
-        # parallel — that is what makes a full unfiltered index fast.
+    while len(out) < cap:
+        pages_left = -(-(cap - len(out)) // SEARCH_PAGE)  # ceil division
         width = 1 if first_wave else max(1, min(SEARCH_WORKERS, pages_left))
         wave = [next_start + i * SEARCH_PAGE for i in range(width)]
         if len(wave) == 1:
@@ -185,13 +177,71 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
         short = False
         for pg in pages:
             out.extend(pg)
-            if len(pg) < SEARCH_PAGE:   # end of the result set is inside this wave
+            if len(pg) < SEARCH_PAGE:
                 short = True
                 break
         if short:
             break
         next_start = wave[-1] + SEARCH_PAGE
         first_wave = False
+        time.sleep(PAGING_DELAY_S)
+    return out[:cap]
+
+
+def _search_db_attributes(s, base: str, db_webid: str, nf: str,
+                          budget: int) -> list[dict]:
+    """Attributes of one database: enumerate ELEMENTS, then ask each element
+    for its (name-filtered) attributes — many small fast requests fanned out
+    over SEARCH_WORKERS threads.
+
+    Why not /assetdatabases/{id}/elementattributes?searchFullHierarchy=true?
+    That call makes the AF server walk the WHOLE hierarchy and LOAD EVERY
+    ATTRIBUTE on every request — and startIndex paging restarts the walk per
+    page. On large databases a single page took minutes (observed: 15-30 min
+    searches), and no amount of client-side parallelism fixes a per-request
+    server-side traversal. Element enumeration skips the attribute loading,
+    and /elements/{id}/attributes are cheap direct lookups.
+    """
+    t0 = time.monotonic()
+    elements = _list_elements(s, base, db_webid, MAX_SEARCH_ELEMENTS)
+    print(f"[af-search] hierarchy: {len(elements)} elements "
+          f"in {time.monotonic() - t0:.1f}s", flush=True)
+    if len(elements) >= MAX_SEARCH_ELEMENTS:
+        print(f"[af-search] ELEMENT CAP REACHED ({MAX_SEARCH_ELEMENTS}) - deeper "
+              "parts of the hierarchy are not scanned. Set AF_Database (or use "
+              "a smaller database) to scope the search.", flush=True)
+
+    def _element_attributes(elem: dict) -> list[dict]:
+        params = {
+            "searchFullHierarchy": "true",   # include nested (child) attributes
+            "maxCount": SEARCH_PAGE,
+            "selectedFields": "Items.WebId;Items.Name;Items.Path;Items.Description;"
+                              "Items.DefaultUnitsName;Items.Type",
+        }
+        if nf:
+            params["nameFilter"] = nf
+        r = s.get(f"{base}/elements/{elem['WebId']}/attributes",
+                  params=params, timeout=60)
+        _pi._log_url(r)
+        r = check_response(r)
+        return r.json().get("Items", [])
+
+    out: list[dict] = []
+    done = 0
+    # waves keep the output deterministic (element order) and allow stopping
+    # at the budget without flooding the server with already-useless requests
+    for w0 in range(0, len(elements), SEARCH_WORKERS * 5):
+        wave = elements[w0:w0 + SEARCH_WORKERS * 5]
+        with ThreadPoolExecutor(max_workers=min(SEARCH_WORKERS, len(wave))) as pool:
+            for items in pool.map(_element_attributes, wave):
+                out.extend(items)
+        done += len(wave)
+        if done % PROGRESS_EVERY < SEARCH_WORKERS * 5 and done < len(elements):
+            print(f"[af-search] {done}/{len(elements)} elements scanned, "
+                  f"{len(out)} attributes so far "
+                  f"({time.monotonic() - t0:.0f}s)", flush=True)
+        if len(out) >= budget:
+            break
         time.sleep(PAGING_DELAY_S)
     return out[:budget]
 
