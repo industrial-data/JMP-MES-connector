@@ -46,6 +46,7 @@ EXPR_DATA_EXTRACTION = Expr(
 	WebAPIURL = Trim( txtbox_WebAPIURL << Get Text );
 	DAServer = Char( MES );
 	PIAFServer = Trim( txtbox_PIAFServer << Get Text );
+	AFDatabase = Trim( Try( txtbox_AFDatabase << Get Text, "" ) );
 	f_REST_CheckConfigured();
 	f_Log( "INFO", "REST transport - WebAPI URL " || WebAPIURL || " / server " || DAServer, section );
 
@@ -64,11 +65,14 @@ EXPR_DATA_EXTRACTION = Expr(
 	bttn_Extraction2 << enabled( 0 ); //disables button
 	bttn_Extraction2 << Set Button Name( "Extracting..." );
 	
-	// Remember last server selected
+	// Remember last server selected. v4.1.4: MUST carry the same fields as the
+	// Find-tags recall write — this file previously dropped AFDatabase, so
+	// running an extraction erased the remembered AF database for the next
+	// session.
 	Try( Save Text File(
 		str.PathLastServerSelected,
 		Eval Insert(
-			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";"
+			"Recall.LastServerSelected = \!"^selected_MES^\!";Recall.LastServerEdited=^is_checked^;Recall.MES = \!"^MES^\!";Recall.Extension = \!"^ServerExtension^\!";Recall.ShortName = \!"^ShortName^\!";Recall.ServerType = \!"^ServerType^\!";Recall.WebAPIURL = \!"^WebAPIURL^\!";Recall.PIAFServer = \!"^PIAFServer^\!";Recall.AFDatabase = \!"^AFDatabase^\!";"
 		)
 	) );
 	

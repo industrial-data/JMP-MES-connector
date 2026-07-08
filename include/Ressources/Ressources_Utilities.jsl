@@ -1392,14 +1392,20 @@ f_RunExtraction = Function(
 			If( n_af_paths < N Items( lstTags ),
 				f_DialogError( "Stack by asset requires ALL selected items to be AF attributes (remove the plain DA tags or uncheck the option)." )
 			);
+			// v4.1.4: show the REAL reason in the dialog (the generic message
+			// made failures undiagnosable from user reports)
 			tblAllTags = Try(
 				f_RunExtraction_PI_AF_Stacked( lstTags, StartFormat, EndFormat, Filters_AA ),
-				f_DialogError( "PI AF stacked extraction failed. Check the log (CTRL+Shift+L) for the request URLs." )
+				str.extract_err = Char( exception_msg );
+				f_Log( "ERROR", "PI AF stacked extraction failed - " || str.extract_err, "DATA EXTRACTION" );
+				f_DialogError( "PI AF stacked extraction failed:\!N" || str.extract_err || "\!N\!NCheck the log (CTRL+Shift+L) for the request URLs." )
 			);
 		,
 			tblAllTags = Try(
 				f_RunExtraction_PI_REST( lstTags, StartFormat, EndFormat, Filters_AA ),
-				f_DialogError( "PI Web API extraction failed. Check the log (CTRL+Shift+L) for the request URLs." )
+				str.extract_err = Char( exception_msg );
+				f_Log( "ERROR", "PI Web API extraction failed - " || str.extract_err, "DATA EXTRACTION" );
+				f_DialogError( "PI Web API extraction failed:\!N" || str.extract_err || "\!N\!NCheck the log (CTRL+Shift+L) for the request URLs." )
 			);
 		);
 		If( N Rows( tblAllTags ) == 0,
@@ -3350,8 +3356,27 @@ f_button.find_tags = Function( {},
 
 
 	f_Log( "INFO", "START tags search.", section );
-	dt_TagTable = f_SQL_FINDTAGS( StrTagName, StrTagDesc, ServerType );
-	
+
+	// v4.1.4: an AF search can take a while (it walks the element hierarchy
+	// server by server) — show the same progress window as the extraction so
+	// the user sees that something is happening. Detailed progress lines
+	// ([af-search] n/m elements scanned...) stream into the JMP log meanwhile.
+	progress:init( 1, WindowSize );
+	progress:set( 1,
+		If( Try( int.AFDisplayMode, 0 ) == 1,
+			"Searching AF attributes... (progress lines in the log: CTRL+Shift+L)",
+			"Searching tags..."
+		)
+	);
+	Try(
+		dt_TagTable = f_SQL_FINDTAGS( StrTagName, StrTagDesc, ServerType )
+	,
+		str.search_err = Char( exception_msg );
+		progress:term();
+		Throw( str.search_err );
+	);
+	progress:term();
+
 	// Order elements alphabetically by tagnames
 	dt_TagTable << Sort( By( :tagnames ), Replace Table, Order( Ascending ), Copy formula( 0 ) );
 
@@ -3413,17 +3438,21 @@ f_button.find_tags = Function( {},
 		
 	// Close the TagTable
 	Close( dt_TagTable, nosave );
-	
-	// Update list box lstAvailableTags w
-	lstAvailableTags << Append( TagList_DescUnit );
-	lstAvailableTags << Set Tips( TagList_DescUnit );
-	
+
+	// Update list box lstAvailableTags. v4.1.4: NOT in AF mode — the flat list
+	// is hidden there (the tree is the display) and stuffing it with an
+	// uncapped attribute index (100k+ items) froze the GUI for minutes.
+	If( Try( int.AFDisplayMode, 0 ) != 1,
+		lstAvailableTags << Append( TagList_DescUnit );
+		lstAvailableTags << Set Tips( TagList_DescUnit );
+	);
+
 	// Add info about number of available tags
 	n_available_tags = N Items( TagList_DescUnit );
 	If( n_available_tags == 0,
 		txtbox_nbTags << Set Text( "" ),
 		txtbox_nbTags << Set Text( " [ " || Char( n_available_tags ) || " ] >>> " )
 	);
-	
+
 ); // End EXPR_Find_Tags
 

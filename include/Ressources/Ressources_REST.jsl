@@ -773,8 +773,9 @@ f_RunExtraction_PI_AF_Stacked = Function( {lstPaths, StartFormat, EndFormat, Fil
 			"rest_df = mc.pi_extract_assets(rest_base, list(rest_paths), rest_method, rest_start, rest_end, int(rest_interval), rest_filters, rest_ef)"
 		)
 	,
+		str.stack_err = Char( exception_msg );
 		progress:term();
-		Throw( "REST: PI AF stacked extraction failed (see log)" );
+		Throw( "REST: PI AF stacked extraction failed - " || str.stack_err );
 	);
 	progress:term();
 
@@ -967,9 +968,10 @@ f_RunExtraction_PI_REST = Function( {lstTags, StartFormat, EndFormat, Filters_AA
 
 	tblAllTags = f_REST_PyCall( "rest_df = mc.pi_extract_end()" );
 
-	, // On error: close the progress bar, then rethrow to the caller's error handling
+	, // On error: close the progress bar, then rethrow WITH the real reason
+		str.chunk_err = Char( exception_msg );
 		progress:term();
-		Throw( "REST: PI Web API extraction failed (see log)" );
+		Throw( "REST: PI Web API extraction failed - " || str.chunk_err );
 	);
 	progress:term();
 
