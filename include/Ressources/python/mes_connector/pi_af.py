@@ -297,19 +297,24 @@ def _points_metadata(s, base: str, paths: list[str]) -> dict[str, dict]:
     return meta
 
 
-def _list_elements(s, base: str, db_webid: str, cap: int) -> list[dict]:
+def _list_elements(base: str, db_webid: str, cap: int) -> list[dict]:
     """All elements of a database (WebId + Path), wave-parallel paging.
 
     Element enumeration does NOT load attribute objects, so it is far cheaper
-    than the elementattributes traversal (see _search_db_attributes)."""
+    than the elementattributes traversal (see _search_db_attributes).
+
+    Workers call get_session() THEMSELVES: sessions are cached per thread and
+    NTLM authenticates per connection — a session shared across threads
+    interleaves handshakes and randomly earns 401s."""
 
     def _fetch(start_index: int) -> list[dict]:
-        r = s.get(f"{base}/assetdatabases/{db_webid}/elements",
-                  params={"searchFullHierarchy": "true",
-                          "startIndex": start_index,
-                          "maxCount": SEARCH_PAGE,
-                          "selectedFields": "Items.WebId;Items.Path"},
-                  timeout=120)
+        r = get_session(base).get(
+            f"{base}/assetdatabases/{db_webid}/elements",
+            params={"searchFullHierarchy": "true",
+                    "startIndex": start_index,
+                    "maxCount": SEARCH_PAGE,
+                    "selectedFields": "Items.WebId;Items.Path"},
+            timeout=120)
         _pi._log_url(r)
         r = check_response(r)
         return r.json().get("Items", [])
@@ -340,11 +345,12 @@ def _list_elements(s, base: str, db_webid: str, cap: int) -> list[dict]:
     return out[:cap]
 
 
-def _search_db_attributes(s, base: str, db_webid: str, nf: str,
+def _search_db_attributes(base: str, db_webid: str, nf: str,
                           budget: int) -> list[dict]:
     """Attributes of one database: enumerate ELEMENTS, then ask each element
     for its (name-filtered) attributes — many small fast requests fanned out
-    over SEARCH_WORKERS threads.
+    over SEARCH_WORKERS threads (each worker uses its own per-thread session,
+    see _list_elements).
 
     Why not /assetdatabases/{id}/elementattributes?searchFullHierarchy=true?
     That call makes the AF server walk the WHOLE hierarchy and LOAD EVERY
@@ -355,13 +361,15 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
     and /elements/{id}/attributes are cheap direct lookups.
     """
     t0 = time.monotonic()
-    elements = _list_elements(s, base, db_webid, MAX_SEARCH_ELEMENTS)
+    elements = _list_elements(base, db_webid, MAX_SEARCH_ELEMENTS)
     print(f"[af-search] hierarchy: {len(elements)} elements "
           f"in {time.monotonic() - t0:.1f}s", flush=True)
     if len(elements) >= MAX_SEARCH_ELEMENTS:
         print(f"[af-search] ELEMENT CAP REACHED ({MAX_SEARCH_ELEMENTS}) - deeper "
               "parts of the hierarchy are not scanned. Set AF_Database (or use "
               "a smaller database) to scope the search.", flush=True)
+
+    skipped: list[Exception] = []  # elements whose attributes call was refused
 
     def _element_attributes(elem: dict) -> list[dict]:
         params = {
@@ -376,10 +384,19 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
         }
         if nf:
             params["nameFilter"] = nf
-        r = s.get(f"{base}/elements/{elem['WebId']}/attributes",
-                  params=params, timeout=60)
-        _pi._log_url(r)
-        r = check_response(r)
+        try:
+            r = get_session(base).get(f"{base}/elements/{elem['WebId']}/attributes",
+                                      params=params, timeout=60)
+            _pi._log_url(r)
+            r = check_response(r)
+        except AuthRequired:
+            raise                            # -> JSL login dialog
+        except Exception as ex:  # noqa: BLE001 - one refused element must not
+            # kill the whole search: some system/configuration elements answer
+            # 400/403 to the attributes call — skip them and keep scanning
+            skipped.append(ex)
+            print(f"[af-search] element skipped ({ex})", flush=True)
+            return []
         return r.json().get("Items", [])
 
     out: list[dict] = []
@@ -399,6 +416,11 @@ def _search_db_attributes(s, base: str, db_webid: str, nf: str,
         if len(out) >= budget:
             break
         time.sleep(PAGING_DELAY_S)
+    if skipped:
+        print(f"[af-search] {len(skipped)}/{done} elements skipped (the server "
+              "refused their attributes call - details above)", flush=True)
+        if not out and len(skipped) >= done:
+            raise skipped[-1]   # NOTHING scanned successfully - a real failure
     return out[:budget]
 
 
@@ -453,7 +475,7 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
     rows: list[dict] = []
     for db in _databases(base, af_webid, database):
         t0 = time.monotonic()
-        db_rows = _search_db_attributes(s, base, db["WebId"], nf, cap - len(rows))
+        db_rows = _search_db_attributes(base, db["WebId"], nf, cap - len(rows))
         rows.extend(db_rows)
         print(f"[af-search] {db.get('Name', '?')}: {len(db_rows)} attributes "
               f"in {time.monotonic() - t0:.1f}s", flush=True)
