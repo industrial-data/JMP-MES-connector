@@ -118,8 +118,16 @@ try:
     import mes_connector
     mes_connector.configure_tls(bool(^int.TLSVerify^))
     rest_status = "OK " + mes_connector.__version__ + " | python " + sys.version.split()[0] + " | " + _pkg
-    _sso = "requests_negotiate_sspi" if sys.platform == "win32" else "requests_kerberos"
-    for _opt in (_sso, "keyring", "truststore", "requests_ntlm"):
+    _sso_mods = ("requests_negotiate_sspi", "requests_kerberos") if sys.platform == "win32" else ("requests_kerberos",)
+    for _m in _sso_mods:
+        try:
+            __import__(_m)
+            break
+        except ImportError:
+            pass
+    else:
+        rest_optdeps += _sso_mods[0] + " "
+    for _opt in ("keyring", "truststore", "requests_ntlm"):
         try:
             __import__(_opt)
         except ImportError:
@@ -167,12 +175,24 @@ except Exception as _ex:
 	// session / certifi CA bundle).
 	rest_optdeps = Trim( Try( Char( Python Get( rest_optdeps ) ), "" ) );
 	If( rest_optdeps != "",
-		// pip names = module names with hyphens (requests_negotiate_sspi -> requests-negotiate-sspi, ...)
-		str.opt_pips = Substitute( rest_optdeps, "_", "-" );
-		f_Log( "INFO", "Installing missing python packages: " || str.opt_pips, "REST" );
-		Try( Python Install Packages( str.opt_pips ) );
+		// pip names = module names with hyphens; ONE pip call per package so a
+		// single failing build cannot block the others
+		lst.opt_pips = Words( Substitute( rest_optdeps, "_", "-" ) );
+		f_Log( "INFO", "Installing missing python packages: " || Concat Items( lst.opt_pips, " " ), "REST" );
+		For( int.i_pip = 1, int.i_pip <= N Items( lst.opt_pips ), int.i_pip++,
+			Try( Python Install Packages( lst.opt_pips[int.i_pip] ) )
+		);
 		Python Submit( str.init_code );  // re-run the import check to report the real outcome
 		rest_optdeps = Trim( Try( Char( Python Get( rest_optdeps ) ), "" ) );
+		// Windows fallback: when requests-negotiate-sspi cannot be installed
+		// (pip build/proxy trouble), requests-kerberos delivers the same silent
+		// SSO through SSPI (auth.py tries both libraries)
+		If( Contains( rest_optdeps, "requests_negotiate_sspi" ),
+			f_Log( "INFO", "requests-negotiate-sspi could not be installed - trying requests-kerberos instead (same Windows SSO).", "REST" );
+			Try( Python Install Packages( "requests-kerberos" ) );
+			Python Submit( str.init_code );
+			rest_optdeps = Trim( Try( Char( Python Get( rest_optdeps ) ), "" ) );
+		);
 		If( rest_optdeps != "",
 			f_Log( "WARNING", "Optional python packages still missing after install: " || rest_optdeps || " - Kerberos single sign-on stays unavailable if the SSO library is among them (the login dialog still works). Check internet/proxy access; pip output is in the JMP log.", "REST" ),
 			f_Log( "INFO", "Optional python packages installed - Kerberos SSO is available.", "REST" )

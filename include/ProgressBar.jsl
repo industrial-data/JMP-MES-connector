@@ -66,5 +66,9 @@ progress:set = Function( {workdone, title},
 
 
 progress:term = Function( {},
-	progress:Window << closeWindow
+	// Idempotent: error paths reach term() twice (f_DialogError resets the
+	// buttons, then the caller's error handler cleans up again) — closing an
+	// already-closed window must not raise "deleted object reference".
+	Try( progress:Window << closeWindow );
+	progress:Window = Empty();
 );
