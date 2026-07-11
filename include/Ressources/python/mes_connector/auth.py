@@ -4,7 +4,9 @@ Authentication and session handling for mes_connector.
 
 Strategy (v3.0):
 1. Try single-sign-on silently:
-   - Windows: requests-negotiate-sspi (uses the logged-in AD account)
+   - Windows: requests-negotiate-sspi (uses the logged-in AD account);
+     requests-kerberos works as a fallback — its SPNEGO backend (pyspnego)
+     uses SSPI on Windows too
    - macOS/Linux: requests-kerberos (uses an existing kinit ticket)
 2. Else, use credentials saved in the OPERATING SYSTEM credential vault
    (Windows Credential Manager / macOS Keychain, via the `keyring` package)
@@ -242,7 +244,7 @@ def _kerberos_auth():
             from requests_negotiate_sspi import HttpNegotiateAuth
             return HttpNegotiateAuth()
         except ImportError:
-            return None
+            pass  # fall through: requests-kerberos speaks SSPI on Windows too (pyspnego)
     try:
         from requests_kerberos import HTTPKerberosAuth, OPTIONAL
         return HTTPKerberosAuth(mutual_authentication=OPTIONAL)
@@ -261,7 +263,9 @@ def _ntlm_auth(user: str, password: str):
 
 
 def _sso_library_name() -> str:
-    return "requests-negotiate-sspi" if sys.platform == "win32" else "requests-kerberos"
+    if sys.platform == "win32":
+        return "requests-negotiate-sspi / requests-kerberos"
+    return "requests-kerberos"
 
 
 def _stored_credentials(host: str):

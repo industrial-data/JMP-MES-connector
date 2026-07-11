@@ -68,9 +68,12 @@ f_REST_CheckConfigured = Function( {},
       4. If a core dependency is missing (JMP's python is an ISOLATED
          environment with its own site-packages — a fresh JMP install has
          no requests/pandas/numpy), installs the required set on demand via
-         Python Install Packages and retries. On Windows it also tries
-         requests-negotiate-sspi so SSO works; failing that, the login
-         dialog covers auth.
+         Python Install Packages and retries. Independently of that, any
+         missing OPTIONAL package is installed on every init: the Kerberos
+         SSO library (requests-negotiate-sspi on Windows, requests-kerberos
+         elsewhere — SSO is the default login), keyring, truststore and
+         requests-ntlm. If the SSO install fails, the login dialog covers
+         auth.
       5. Round-trip-tests Python Send/Get, since every later bridge call
          relies on that mechanism.
 */
@@ -115,7 +118,8 @@ try:
     import mes_connector
     mes_connector.configure_tls(bool(^int.TLSVerify^))
     rest_status = "OK " + mes_connector.__version__ + " | python " + sys.version.split()[0] + " | " + _pkg
-    for _opt in ("keyring", "truststore", "requests_ntlm"):
+    _sso = "requests_negotiate_sspi" if sys.platform == "win32" else "requests_kerberos"
+    for _opt in (_sso, "keyring", "truststore", "requests_ntlm"):
         try:
             __import__(_opt)
         except ImportError:
@@ -135,10 +139,6 @@ except Exception as _ex:
 	If( Contains( Char( rest_status ), "No module named" ),
 		f_Log( "WARNING", "JMP's python environment lacks core packages (" || Char( rest_status ) || ") - installing requests, pandas, numpy now (needs internet/proxy access)...", "REST" );
 		Try( Python Install Packages( "requests pandas numpy" ) );
-		If( Host is( "Windows" ),
-			// Optional: enables silent Windows SSO; the login dialog covers auth if this fails
-			Try( Python Install Packages( "requests-negotiate-sspi" ) )
-		);
 		Python Submit( str.init_code );
 		rest_status = Python Get( rest_status );
 		f_Log( "INFO", "Python init (after install) - " || Char( rest_status ), "REST" );
@@ -154,14 +154,29 @@ except Exception as _ex:
 		)
 	);
 
-	// Optional packages: keyring (remember passwords in the OS credential
-	// vault) and truststore (validate TLS against the OS certificate store,
-	// so corporate CAs work). Install once when missing; everything still
-	// works without them (login dialog each session / certifi CA bundle).
-	rest_optdeps = Try( Char( Python Get( rest_optdeps ) ), "" );
-	If( Trim( rest_optdeps ) != "",
-		f_Log( "INFO", "Installing optional python packages: " || rest_optdeps, "REST" );
-		Try( Python Install Packages( "keyring truststore requests-ntlm" ) );
+	// Optional packages, installed whenever missing (NOT only on a fresh
+	// python environment — that was the v3.0 bug that left machines with
+	// pre-existing core packages without SSO forever):
+	//  - the Kerberos SSO library, requests-negotiate-sspi on Windows /
+	//    requests-kerberos elsewhere. SSO is the DEFAULT login: without it
+	//    every user gets the password dialog.
+	//  - keyring (remember passwords in the OS credential vault) and
+	//    truststore (validate TLS against the OS certificate store, so
+	//    corporate CAs work) and requests-ntlm (explicit-credential NTLM).
+	// Everything still degrades gracefully without them (login dialog each
+	// session / certifi CA bundle).
+	rest_optdeps = Trim( Try( Char( Python Get( rest_optdeps ) ), "" ) );
+	If( rest_optdeps != "",
+		// pip names = module names with hyphens (requests_negotiate_sspi -> requests-negotiate-sspi, ...)
+		str.opt_pips = Substitute( rest_optdeps, "_", "-" );
+		f_Log( "INFO", "Installing missing python packages: " || str.opt_pips, "REST" );
+		Try( Python Install Packages( str.opt_pips ) );
+		Python Submit( str.init_code );  // re-run the import check to report the real outcome
+		rest_optdeps = Trim( Try( Char( Python Get( rest_optdeps ) ), "" ) );
+		If( rest_optdeps != "",
+			f_Log( "WARNING", "Optional python packages still missing after install: " || rest_optdeps || " - Kerberos single sign-on stays unavailable if the SSO library is among them (the login dialog still works). Check internet/proxy access; pip output is in the JMP log.", "REST" ),
+			f_Log( "INFO", "Optional python packages installed - Kerberos SSO is available.", "REST" )
+		);
 	);
 
 	// --- 5) Verify the Python Send/Get mechanism the bridge relies on ---
