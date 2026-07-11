@@ -65,23 +65,30 @@ __version__ = "4.1.0"
 # ---------------------------------------------------------------------------
 def search_af_attributes(base_url: str, af_server: str, name: str = "",
                          description: str = "", database: str = "",
-                         tag: str = "") -> pd.DataFrame:
+                         tag: str = "", da_server: str = "") -> pd.DataFrame:
     """AF attribute search. Columns: tagnames (= full attribute path — the
     extraction identity), descriptions, units, type, path (element path),
     pointname (underlying PI tag). `name` filters the ATTRIBUTE name
     server-side; `tag` filters the underlying PI point client-side;
     `database` restricts the search to one AF database (AF_Database
-    server-list field). The JSL side renders `path` as an element tree."""
+    server-list field); `da_server` completes server-less ConfigStrings for
+    the v4.1.5 tag-metadata lookup (empty descriptions/units are filled from
+    the PI point's Descriptor/EngineeringUnits — see pi_af.search_attributes).
+    The JSL side renders `path` as an element tree."""
     base = normalize_base_url("PI", base_url)
     return _af.search_attributes(base, af_server, name, description,
-                                 database=database, tag_filter=tag)
+                                 database=database, tag_filter=tag,
+                                 da_server=da_server)
 
 
 def pi_discover(base_url: str) -> pd.DataFrame:
     """v4.1: enumerate DA servers, AF servers and AF databases exposed by a
     PI Web API endpoint (GET /dataservers + /assetservers + their databases).
     Returns ready server-list rows: site / server / Type / WebAPI_URL /
-    PI_AF_Server / AF_Database — the GUI's 'Load servers from Web API' button."""
+    PI_AF_Server / AF_Database. v4.1.5: each AF database row is paired with
+    the DA server its attributes actually reference (sampled from PI-Point
+    ConfigStrings), not blindly with the first exposed DA server — the GUI's
+    'Load servers from Web API' button."""
     base = normalize_base_url("PI", base_url)
     return _af.discover_servers(base)
 
@@ -113,7 +120,7 @@ def pi_search(base_url: str, da_server: str, af_server: str = "",
                 "this server (set it in the server list or 'Edit server address').")
         return _af.search_attributes(
             normalize_base_url("PI", base_url), af_server, attribute, description,
-            database=af_database, tag_filter=name)
+            database=af_database, tag_filter=name, da_server=da_server)
 
     parts: list[pd.DataFrame] = []
     af_error = None
@@ -123,7 +130,7 @@ def pi_search(base_url: str, da_server: str, af_server: str = "",
         try:
             parts.append(_af.search_attributes(
                 normalize_base_url("PI", base_url), af_server, name, description,
-                database=af_database))
+                database=af_database, da_server=da_server))
         except AuthRequired:
             raise                     # credentials issue: the dialog must handle it
         except Exception as ex:       # noqa: BLE001 - degrade, don't die
@@ -165,10 +172,13 @@ def pi_tag_or_attribute_type(base_url: str, da_server: str, name_or_path: str) -
 
 def search_event_frames(base_url: str, af_server: str, name: str = "",
                         template: str = "", start: str = "*-30d",
-                        end: str = "*") -> pd.DataFrame:
-    """Event frames overlapping [start, end]: Name/Template/Start/End/Path."""
+                        end: str = "*", database: str = "") -> pd.DataFrame:
+    """Event frames overlapping [start, end]: Name/Template/Start/End/Path.
+    v4.1.5: `database` scopes the search to one AF database (AF_Database
+    server-list field), matching the attribute search's scoping."""
     base = normalize_base_url("PI", base_url)
-    return _af.search_event_frames(base, af_server, name, template, start, end)
+    return _af.search_event_frames(base, af_server, name, template, start, end,
+                                   database=database)
 
 
 def _parse_event_frames_json(ef_json: str) -> list[dict]:

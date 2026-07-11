@@ -23,6 +23,9 @@ PI Web API endpoints used (all GET):
       attribute of the whole hierarchy per request (and per page!) and took
       15-30 minutes on production-size databases.
 - /attributes?path=\\\\AF\\DB\\Element|Attribute    -> attribute WebId + Type
+- /points/multiple?path=\\\\DA\\tag&path=...        -> tag metadata (Name /
+      Descriptor / EngineeringUnits) for the PI points behind the attributes,
+      many points per request, requests strictly SEQUENTIAL (v4.1.5).
 - /streams/{webid}/...                              -> data (same streams
       controller as DA points — attribute WebIds are streamable), reused from
       pi_webapi.py.
@@ -41,7 +44,7 @@ import numpy as np
 import pandas as pd
 
 from . import pi_webapi as _pi
-from .auth import check_response, get_session
+from .auth import AuthRequired, check_response, get_session
 
 PAGING_DELAY_S = 0.02
 
@@ -89,42 +92,114 @@ def _databases(base: str, af_webid: str, database: str = "") -> list[dict]:
     return hits
 
 
+DISCOVER_SAMPLE_ELEMENTS = 8  # elements probed per database for the DA pairing
+
+
+def _db_dataserver(s, base: str, db_webid: str) -> str:
+    r"""DA server whose tags a database's attributes actually reference,
+    sampled from the first PI-Point ConfigString found (`\\SRV\tag` -> SRV).
+
+    One element listing plus at most DISCOVER_SAMPLE_ELEMENTS attribute
+    lookups, all SEQUENTIAL — discovery must stay light on the server.
+    Returns '' when the sample holds no PI-Point reference.
+    """
+    r = s.get(f"{base}/assetdatabases/{db_webid}/elements",
+              params={"searchFullHierarchy": "true", "maxCount": 100,
+                      "selectedFields": "Items.WebId"}, timeout=60)
+    _pi._log_url(r)
+    r = check_response(r)
+    for elem in r.json().get("Items", [])[:DISCOVER_SAMPLE_ELEMENTS]:
+        r = s.get(f"{base}/elements/{elem['WebId']}/attributes",
+                  params={"searchFullHierarchy": "true", "maxCount": 100,
+                          "selectedFields":
+                              "Items.ConfigString;Items.DataReferencePlugIn"},
+                  timeout=60)
+        _pi._log_url(r)
+        r = check_response(r)
+        for it in r.json().get("Items", []):
+            path, _ = _point_path_and_name(
+                it.get("ConfigString"), it.get("DataReferencePlugIn"))
+            if path:
+                return path.lstrip("\\").split("\\", 1)[0]
+        time.sleep(PAGING_DELAY_S)
+    return ""
+
+
 def discover_servers(base_url: str) -> pd.DataFrame:
     """Enumerate what a PI Web API endpoint exposes: PI Data Archive (DA)
     servers, AF servers and their databases.
 
     Endpoints: GET /dataservers and GET /assetservers (both are root links of
     the PI Web API home controller), then /assetservers/{webid}/assetdatabases.
+    One endpoint failing (blocked, not licensed) only drops its rows — the
+    other side is still discovered.
 
     Returns ready-to-use server-list rows (same columns as
     MES_servers_list.xlsx): one row per DA server (plain point search) plus one
-    row per AF server x database (attribute search). The first DA server is
-    used as the companion `server` for AF rows (needed for DA lookups).
+    row per AF server x database (attribute search). v4.1.5: each AF row's
+    companion `server` is the DA server its attributes actually reference
+    (sampled via _db_dataserver) — the list string then pairs the database
+    with the RIGHT data server, not blindly with the first one. When the
+    sample is inconclusive the first exposed DA server is used.
     """
     base = base_url.rstrip("/")
     s = get_session(base)
 
-    r = s.get(f"{base}/dataservers",
-              params={"selectedFields": "Items.Name;Items.IsConnected"}, timeout=60)
-    _pi._log_url(r)
-    r = check_response( r )
-    da_names = [str(it.get("Name", "")) for it in r.json().get("Items", [])]
-
     rows: list[dict] = []
+    da_names: list[str] = []
+    try:
+        r = s.get(f"{base}/dataservers",
+                  params={"selectedFields": "Items.Name;Items.IsConnected"}, timeout=60)
+        _pi._log_url(r)
+        r = check_response( r )
+        da_names = [str(it.get("Name", "")) for it in r.json().get("Items", [])]
+    except AuthRequired:
+        raise
+    except Exception as ex:  # noqa: BLE001 - AF-only endpoints still discoverable
+        print(f"[discover] /dataservers failed ({ex}) - no DA rows", flush=True)
     for da in da_names:
         rows.append({"site": f"{da} (DA points)", "server": da, "Type": "PI",
                      "WebAPI_URL": base, "PI_AF_Server": "", "AF_Database": ""})
 
-    r = s.get(f"{base}/assetservers",
-              params={"selectedFields": "Items.Name;Items.WebId"}, timeout=60)
-    _pi._log_url(r)
-    r = check_response( r )
-    default_da = da_names[0] if da_names else ""
-    for af in r.json().get("Items", []):
+    af_items: list[dict] = []
+    try:
+        r = s.get(f"{base}/assetservers",
+                  params={"selectedFields": "Items.Name;Items.WebId"}, timeout=60)
+        _pi._log_url(r)
+        r = check_response( r )
+        af_items = r.json().get("Items", [])
+    except AuthRequired:
+        raise
+    except Exception as ex:  # noqa: BLE001 - DA-only endpoints still discoverable
+        print(f"[discover] /assetservers failed ({ex}) - no AF rows", flush=True)
+
+    for af in af_items:
         af_name = str(af.get("Name", ""))
-        for db in _databases(base, af["WebId"]):
+        try:
+            dbs = _databases(base, af["WebId"])
+        except AuthRequired:
+            raise
+        except Exception as ex:  # noqa: BLE001 - continue with the other AF servers
+            print(f"[discover] databases of AF server '{af_name}' failed ({ex})",
+                  flush=True)
+            continue
+        for db in dbs:
             db_name = str(db.get("Name", ""))
-            rows.append({"site": f"{db_name} (AF: {af_name})", "server": default_da,
+            da = ""
+            try:
+                da = _db_dataserver(s, base, db["WebId"])
+            except AuthRequired:
+                raise
+            except Exception as ex:  # noqa: BLE001 - pairing is best-effort
+                print(f"[discover] DA sampling of '{db_name}' failed ({ex})",
+                      flush=True)
+            if da:
+                print(f"[discover] {af_name}\\{db_name}: tags on '{da}'", flush=True)
+            else:
+                da = da_names[0] if da_names else ""
+                print(f"[discover] {af_name}\\{db_name}: no PI-Point reference "
+                      f"in the sample - paired with '{da}'", flush=True)
+            rows.append({"site": f"{db_name} (AF: {af_name})", "server": da,
                          "Type": "PI", "WebAPI_URL": base,
                          "PI_AF_Server": af_name, "AF_Database": db_name})
 
@@ -161,16 +236,65 @@ def _wild_match(text: str, pattern: str) -> bool:
     return True
 
 
-def _point_from_config(config: str, plugin: str) -> str:
-    r"""Underlying PI point (tag) name of an attribute, from its data
-    reference. `\\PIDA1\tic_abc3421;ReadOnly=1` -> `tic_abc3421`. Empty for
-    non-PI-Point references (formulas, constants, table lookups...)."""
+def _point_path_and_name(config: str, plugin: str, da_server: str = "") -> tuple[str, str]:
+    r"""Underlying PI point of an attribute, from its data reference:
+    (full `\\SRV\tag` path, bare tag name).
+
+    `\\PIDA1\tic_abc3421;ReadOnly=1` -> (`\\PIDA1\tic_abc3421`, `tic_abc3421`).
+    A ConfigString without the server part is completed with `da_server` when
+    known (path stays '' otherwise — the name alone is still searchable).
+    ('', '') for non-PI-Point references (formulas, constants, table lookups...).
+    """
     if plugin and "pi point" not in str(plugin).lower():
-        return ""
+        return "", ""
     cfg = str(config or "").split(";")[0].strip()
-    if not cfg:
-        return ""
-    return cfg.rpartition("\\")[2].strip()
+    name = cfg.rpartition("\\")[2].strip()
+    if not name:
+        return "", ""
+    if cfg.startswith("\\\\"):
+        srv = cfg.lstrip("\\").split("\\", 1)[0].strip()
+        return (f"\\\\{srv}\\{name}", name) if srv else ("", name)
+    if da_server:
+        return f"\\\\{da_server}\\{name}", name
+    return "", name
+
+
+POINT_META_CHUNK = 50     # point paths per GET /points/multiple request
+MAX_POINT_META = 3000     # skip the tag-metadata lookup above this many points
+                          # (an unfiltered whole-database index would need
+                          # thousands of requests — narrow the search instead)
+
+
+def _points_metadata(s, base: str, paths: list[str]) -> dict[str, dict]:
+    r"""Tag metadata (Name / Descriptor / EngineeringUnits) for many PI points
+    in few requests: GET /points/multiple resolves POINT_META_CHUNK full
+    `\\SRV\tag` paths per call. Calls run strictly SEQUENTIALLY — speed comes
+    from the batching, not from client-side parallelism (server load policy).
+
+    Returns {lower-cased requested path -> point object}; points that fail to
+    resolve (deleted tag, wrong server) are simply absent.
+    """
+    meta: dict[str, dict] = {}
+    for i in range(0, len(paths), POINT_META_CHUNK):
+        chunk = paths[i:i + POINT_META_CHUNK]
+        params = [("selectedFields",
+                   "Items.Identifier;Items.Object.Name;"
+                   "Items.Object.Descriptor;Items.Object.EngineeringUnits")]
+        params += [("path", p) for p in chunk]
+        r = s.get(f"{base}/points/multiple", params=params, timeout=120)
+        _pi._log_url(r)
+        r = check_response(r)
+        items = r.json().get("Items", [])
+        for j, it in enumerate(items):
+            obj = it.get("Object") or {}
+            if not obj:
+                continue
+            key = str(it.get("Identifier") or
+                      (chunk[j] if j < len(chunk) else "")).lower()
+            if key:
+                meta[key] = obj
+        time.sleep(PAGING_DELAY_S)
+    return meta
 
 
 def _list_elements(s, base: str, db_webid: str, cap: int) -> list[dict]:
@@ -282,7 +406,8 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
                       description_filter: str = "",
                       max_results: int | None = None,
                       database: str = "",
-                      tag_filter: str = "") -> pd.DataFrame:
+                      tag_filter: str = "",
+                      da_server: str = "") -> pd.DataFrame:
     """Search attributes across the AF server's databases.
 
     Filters (v4.1.3 — matching the GUI's three search fields):
@@ -290,15 +415,25 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
     - tag_filter     -> underlying PI POINT (tag) name. The PI Web API cannot
       filter by point server-side, so this is applied client-side on the
       point name parsed from each attribute's ConfigString.
-    - description_filter -> attribute description, client-side.
+    - description_filter -> attribute description, client-side. Applied AFTER
+      the tag-metadata enrichment so it also matches tag descriptors.
     Client-side filters use the same wildcard semantics as the JSL search
     bars: spaces and '*' are in-order wildcards.
 
     `database` (server list AF_Database field) restricts the search to one
     database — recommended, since AF servers commonly host many.
 
+    `da_server` (server list `server` field) completes ConfigStrings written
+    without the `\\\\SRV` part so their tag metadata can be resolved too.
+
     max_results None/0 = UNLIMITED: an unfiltered search indexes the whole
     database (the GUI caps only what the tree DISPLAYS).
+
+    v4.1.5 — tag metadata: AF attributes often carry no Description/UOM while
+    the PI point behind them has a Descriptor and EngineeringUnits. After the
+    scan, the points are resolved in bulk (sequential /points/multiple calls,
+    capped at MAX_POINT_META distinct points) and empty descriptions/units are
+    filled from the tag; `pointname` gets the tag's canonical casing.
 
     Returns the GUI contract columns: tagnames / descriptions / units / type /
     path / pointname — `tagnames` is the FULL attribute path (unique identity
@@ -340,14 +475,14 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
         df[dst] = df[dst].fillna("")
     # element path (everything before the |attribute part)
     df["path"] = df["tagnames"].str.split("|").str[0]
-    # underlying PI point (tag) name, parsed from the data reference
+    # underlying PI point (tag), parsed from the data reference: full
+    # \\SRV\tag path (for the metadata lookup) + bare name (search/display)
     cfg = df.get("ConfigString", pd.Series("", index=df.index)).fillna("")
     plugin = df.get("DataReferencePlugIn", pd.Series("", index=df.index)).fillna("")
-    df["pointname"] = [_point_from_config(c, p) for c, p in zip(cfg, plugin)]
+    pts = [_point_path_and_name(c, p, da_server) for c, p in zip(cfg, plugin)]
+    df["pointpath"] = [pp for pp, _ in pts]
+    df["pointname"] = [pn for _, pn in pts]
 
-    d = (description_filter or "").strip()
-    if d:
-        df = df[df["descriptions"].map(lambda x: _wild_match(x, d))]
     tg = (tag_filter or "").strip()
     if tg:
         df = df[df["pointname"].map(lambda x: _wild_match(x, tg))]
@@ -356,6 +491,43 @@ def search_attributes(base_url: str, af_server: str, name_filter: str = "",
               "by point)", flush=True)
 
     df = df.drop_duplicates(subset="tagnames")
+
+    # v4.1.5: tag metadata — fill empty attribute descriptions/units from the
+    # PI point's Descriptor/EngineeringUnits (resolved in bulk, sequentially)
+    point_paths = sorted({p for p in df["pointpath"] if p})
+    if point_paths and len(point_paths) <= MAX_POINT_META:
+        t0 = time.monotonic()
+        try:
+            meta = _points_metadata(s, base, point_paths)
+        except AuthRequired:
+            raise
+        except Exception as ex:  # noqa: BLE001 - enrichment must not kill the search
+            meta = {}
+            print(f"[af-search] tag metadata lookup failed ({ex}) - showing "
+                  "AF metadata only", flush=True)
+        if meta:
+            def _tag_field(path: str, field: str) -> str:
+                return str((meta.get(path.lower()) or {}).get(field) or "")
+
+            df["pointname"] = [_tag_field(pp, "Name") or pn
+                               for pp, pn in zip(df["pointpath"], df["pointname"])]
+            df["descriptions"] = [
+                ds if str(ds).strip() else _tag_field(pp, "Descriptor")
+                for ds, pp in zip(df["descriptions"], df["pointpath"])]
+            df["units"] = [
+                un if str(un).strip() else _tag_field(pp, "EngineeringUnits")
+                for un, pp in zip(df["units"], df["pointpath"])]
+            print(f"[af-search] tag metadata: {len(meta)}/{len(point_paths)} "
+                  f"points resolved in {time.monotonic() - t0:.1f}s", flush=True)
+    elif len(point_paths) > MAX_POINT_META:
+        print(f"[af-search] {len(point_paths)} distinct PI points - skipping "
+              f"the tag metadata lookup (cap {MAX_POINT_META}); narrow the "
+              "search to get tag descriptions/units", flush=True)
+
+    d = (description_filter or "").strip()
+    if d:
+        df = df[df["descriptions"].map(lambda x: _wild_match(x, d))]
+
     return df[empty_cols].reset_index(drop=True)
 
 
@@ -375,8 +547,13 @@ def attribute_type(base_url: str, attribute_path: str) -> str:
 # ---------------------------------------------------------------------------
 def search_event_frames(base_url: str, af_server: str, name_filter: str = "",
                         template_filter: str = "", start: str = "*-30d",
-                        end: str = "*", max_results: int = 2000) -> pd.DataFrame:
-    """Event frames overlapping [start, end] across all databases.
+                        end: str = "*", max_results: int = 2000,
+                        database: str = "") -> pd.DataFrame:
+    """Event frames overlapping [start, end].
+
+    v4.1.5: `database` (server list AF_Database field) restricts the search to
+    that ONE database — same scoping as the attribute search, so a server-list
+    entry consistently means "this AF database". Empty = all databases.
 
     Returns: Name / Template / Start / End / Path — the GUI lists them so the
     user can restrict the extraction to the selected frames' time windows.
@@ -390,7 +567,7 @@ def search_event_frames(base_url: str, af_server: str, name_filter: str = "",
         nf = f"*{nf}*"
 
     rows: list[dict] = []
-    for db in _databases(base, af_webid):
+    for db in _databases(base, af_webid, database):
         params = {
             "searchMode": "Overlapped",
             "startTime": start,

@@ -417,10 +417,11 @@ f_REST_PI_TagType = Function( {Tag},
 /*
     f_REST_FindEventFrames Function
 
-    Event frames overlapping the given window, across all databases of the
-    configured AF server. Used by the "Event frames" panel in the Filters tab
-    (Seeq-style conditions): the user can restrict the extraction to the time
-    windows of the selected frames.
+    Event frames overlapping the given window on the configured AF server —
+    v4.1.5: scoped to AF_Database when the server-list entry sets one (same
+    scoping as the attribute search), all databases otherwise. Used by the
+    "Event frames" panel in the Filters tab (Seeq-style conditions): the user
+    can restrict the extraction to the time windows of the selected frames.
 
     @return JMP table with columns Name / Template / Start / End / Path.
 */
@@ -435,14 +436,16 @@ f_REST_FindEventFrames = Function( {NameFilter, TemplateFilter, StartISO, EndISO
 	rest_template = Char( TemplateFilter );
 	rest_start = Char( StartISO );
 	rest_end = Char( EndISO );
+	rest_afdb = Char( AFDatabase );
 	Python Send( rest_base );
 	Python Send( rest_af );
 	Python Send( rest_name );
 	Python Send( rest_template );
 	Python Send( rest_start );
 	Python Send( rest_end );
+	Python Send( rest_afdb );
 	dt_rest = f_REST_PyCall(
-		"rest_df = mc.search_event_frames(rest_base, rest_af, rest_name, rest_template, rest_start, rest_end)"
+		"rest_df = mc.search_event_frames(rest_base, rest_af, rest_name, rest_template, rest_start, rest_end, database=rest_afdb)"
 	);
 	dt_rest << Set Name( "Event frames" );
 	dt_rest << Show Window( 0 );
@@ -698,6 +701,10 @@ f_AF_SetMode = Function( {af_on},
     /assetservers/{id}/assetdatabases). Returns a table with the server-list
     columns (site/server/Type/WebAPI_URL/PI_AF_Server/AF_Database) — the
     'Load servers from Web API' button feeds it to f_BuildServersAA.
+    v4.1.5: each AF database row is paired with the DA server its attributes
+    actually reference (Python samples a few PI-Point ConfigStrings), so the
+    list string "<db> (AF: <srv>) [PI] - <DA>" shows the RIGHT data server —
+    progress and pairing lines stream into the JMP log (CTRL+Shift+L).
 */
 f_REST_DiscoverServers = Function( {webapi_url},
 	f_REST_InitPython();

@@ -26,6 +26,14 @@ data as a JMP table.
 - Server-list discovery: "Load servers from Web API..." button → `f_REST_DiscoverServers`
   → `pi_discover` (`GET /dataservers`, `/assetservers`, per-server databases) →
   `f_BuildServersAA` (factored out of `f_LoadServerList`; also used by the Excel path).
+  v4.1.5: each AF database row is paired with the DA server its attributes actually
+  reference (sampled from PI-Point ConfigStrings; first exposed DA only as fallback),
+  and one root endpoint failing only drops its rows.
+- Tag metadata (v4.1.5): after the AF scan, `search_attributes` resolves the underlying
+  PI points in bulk (`GET /points/multiple`, 50 paths/call, strictly SEQUENTIAL — no
+  client-side parallelism for metadata) and fills empty attribute descriptions/units
+  from the tag's Descriptor/EngineeringUnits (skipped above 3000 distinct points).
+  Event-frame search is scoped to `AF_Database` when set, like the attribute search.
 - "Concat results" option (`OptStackAssets` → `f_RunExtraction_PI_AF_Stacked` →
   `pi_extract_assets`): output `TS, TS_UTC, [EventFrame], Level 1..K, Asset,
   <attribute-name cols>` — Level columns = element hierarchy below the database; rows

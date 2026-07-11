@@ -82,8 +82,7 @@ The GUI's **"PI AF search" checkbox** drives the mode explicitly
 (`pi_search(..., af_only=1)`): checked, the search returns ONLY attributes and
 AF errors PROPAGATE (no silent degradation to DA points — that v4.0 behavior
 hid every AF misconfiguration); unchecked, it is a plain DA point search like
-v3. The search runs against `/assetdatabases/{id}/elementattributes`
-(`searchFullHierarchy=true`) and is restricted to ONE database when the server
+v3. The search is restricted to ONE database when the server
 list provides `AF_Database` (recommended; a typo'd database name raises with
 the list of available ones). The search ENUMERATES ELEMENTS first
 (`/assetdatabases/{id}/elements`, WebId+Path only — no attribute loading) and
@@ -106,6 +105,19 @@ whole database; only the JSL tree display is capped (`AF_DisplayMax`,
 hierarchies, and progress lines (`[af-search] n/m elements scanned...`,
 final `TOTAL: n attributes in Xs`) land in the JMP log while it runs.
 The DataFrame gains a `pointname` column (DA rows: pointname = tagname).
+
+**Tag metadata** (v4.1.5): after the scan, the PI points behind the attributes
+are resolved in bulk — `GET /points/multiple?path=\\SRV\tag&path=...`,
+POINT_META_CHUNK (50) paths per call, calls strictly SEQUENTIAL (speed comes
+from the batching, never from client-side parallelism). Empty attribute
+descriptions/units are filled from the tag's `Descriptor`/`EngineeringUnits`
+and `pointname` gets the tag's canonical casing, so each attribute shows its
+associated tagname, tag description and tag unit. Server-less ConfigStrings
+are completed with the entry's `server` (DA) field. Lookup is skipped (with a
+log line) above MAX_POINT_META (3000) distinct points — narrow the search to
+get tag metadata. The description filter runs AFTER the enrichment, so it
+also matches tag descriptors.
+
 Results are identified by the full AF path
 (`\\AFSRV\DB\Plant\Reactor A|Temperature`). The JSL side renders them as an
 element-hierarchy Tree Box (root = database) labeled
@@ -118,6 +130,11 @@ extraction reuses the same /streams code (`_point_info` resolves paths via
 server's databases) → ready server-list rows
 (site/server/Type/WebAPI_URL/PI_AF_Server/AF_Database), one per DA server and
 one per AF database. Feeds the GUI's "Load servers from Web API..." button.
+v4.1.5: each AF database row's `server` is the DA server its attributes
+actually reference — sampled from the first PI-Point `ConfigString` found
+(one element listing + at most DISCOVER_SAMPLE_ELEMENTS attribute lookups per
+database, sequential); the first exposed DA server is only a fallback. One
+root endpoint failing (e.g. `/dataservers` blocked) only drops its rows.
 
 **Concatenated ("stack by asset") extraction** (`pi_extract_assets`):
 attributes grouped by parent element; output is `TS, TS_UTC, [EventFrame],
@@ -131,7 +148,9 @@ simple row filter instead of one column per asset-attribute pair.
 **Event frames** (`search_event_frames` + `apply_event_frames`): frames
 overlapping the extraction window can be searched by name/template; the JSL
 Filters tab lets users restrict the extraction to the selected frames' time
-windows — matching rows keep an `EventFrame` label column.
+windows — matching rows keep an `EventFrame` label column. v4.1.5: scoped to
+`AF_Database` when the server-list entry sets one (like the attribute
+search); all databases otherwise.
 
 ## Contracts with the JSL side (do not break these)
 
