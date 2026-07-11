@@ -224,8 +224,8 @@ def _drop_all_sessions() -> None:
 # (stale); dialog-typed passwords are kept until the user retypes them, so a
 # transient failure does not silently discard what the user just entered.
 
-# host -> winning auth object (decided by probe or first success)
-_host_auth: dict[str, object] = {}
+# host -> (mechanism label, auth object) that last won on a real request
+_host_auth: dict[str, tuple[str, object]] = {}
 # hosts whose current credentials came from the JSL dialog this session
 _dialog_hosts: set[str] = set()
 # bumped on every credential/TLS change so per-thread session caches rebuild
@@ -266,6 +266,20 @@ def _sso_library_name() -> str:
     if sys.platform == "win32":
         return "requests-negotiate-sspi / requests-kerberos"
     return "requests-kerberos"
+
+
+_sso_warned = False
+
+
+def _warn_sso_unavailable() -> None:
+    """Log the missing-SSO situation ONCE per session — _candidates runs on
+    every 401 retry and used to repeat this line dozens of times per search."""
+    global _sso_warned
+    if not _sso_warned:
+        _sso_warned = True
+        print(f"[auth] Kerberos SSO unavailable ({_sso_library_name()} not "
+              "installed) - explicit credentials (vault/dialog) are used instead.",
+              flush=True)
 
 
 def _stored_credentials(host: str):
@@ -309,7 +323,7 @@ def _candidates(host: str, scheme: str) -> list[tuple[str, object]]:
         if kerb is not None:
             out.append(("kerberos", kerb))
         else:
-            print(f"[auth] Kerberos SSO unavailable ({_sso_library_name()} not installed).", flush=True)
+            _warn_sso_unavailable()
         add_cred_mechanisms()
     return out
 
@@ -372,10 +386,16 @@ def _retry_with_mechanisms(resp: requests.Response) -> requests.Response | None:
             continue
         print(f"[auth] Retry {new_req.method} {new_req.url} [{label}] -> {r2.status_code}", flush=True)
         if r2.status_code != 401:
-            _host_auth[host] = auth_obj
-            _bump_generation()   # every thread's next session uses the winner
-            print(f"[auth] '{host}': authenticated with {label}"
-                  + (" (no password needed)" if label == "kerberos" else ""), flush=True)
+            # threads race here during parallel searches: only the FIRST
+            # winner (or an actual mechanism change) bumps the generation and
+            # logs — otherwise every worker re-announced the same mechanism
+            # and invalidated the other threads' perfectly good sessions
+            prev = _host_auth.get(host)
+            if prev is None or prev[0] != label:
+                _host_auth[host] = (label, auth_obj)
+                _bump_generation()   # every thread's next session uses the winner
+                print(f"[auth] '{host}': authenticated with {label}"
+                      + (" (no password needed)" if label == "kerberos" else ""), flush=True)
             return r2
         tried.append(label)
 
@@ -413,7 +433,7 @@ def get_session(server_url: str, verify: bool | None = None) -> requests.Session
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if host in _host_auth:
-        s.auth = _host_auth[host]                     # known winner
+        s.auth = _host_auth[host][1]                  # known winner
     else:
         cands = _candidates(host, parsed.scheme)
         s.auth = cands[0][1] if cands else None       # best guess; 401 decides
@@ -423,6 +443,26 @@ def get_session(server_url: str, verify: bool | None = None) -> requests.Session
 
     _thread_local.sessions[host] = (_auth_generation, s)
     return s
+
+
+def _error_detail(resp: requests.Response) -> str:
+    """Short reason from the response body: PI Web API and IP21 put the real
+    error text there ({'Errors': [...]}) — the status line alone says nothing."""
+    try:
+        body = resp.json()
+    except Exception:
+        if "html" in (resp.headers.get("Content-Type") or "").lower():
+            return ""  # an IIS error page brings no useful text
+        return (resp.text or "").strip()[:300]
+    msgs: list[str] = []
+    if isinstance(body, dict):
+        errs = body.get("Errors")
+        if isinstance(errs, list):
+            msgs.extend(str(e) for e in errs)
+        for key in ("Message", "Error"):
+            if body.get(key):
+                msgs.append(str(body[key]))
+    return "; ".join(msgs)[:300]
 
 
 def check_response(resp: requests.Response) -> requests.Response:
@@ -443,5 +483,12 @@ def check_response(resp: requests.Response) -> requests.Response:
         _host_auth.pop(host, None)
         _bump_generation()
         raise AuthRequired(host)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as ex:
+        detail = _error_detail(resp)
+        if detail:
+            raise requests.HTTPError(f"{ex} | server says: {detail}",
+                                     response=resp) from None
+        raise
     return resp
